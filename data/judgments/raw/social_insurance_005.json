@@ -1,0 +1,17 @@
+{
+  "id": "social_insurance_005",
+  "primary_category": "social_insurance",
+  "all_categories": [
+    [
+      "social_insurance",
+      1
+    ]
+  ],
+  "source_dataset": "fuzi:lawyerllama/answer",
+  "license": "see fuzi-mingcha dataset card (CC-derived)",
+  "collected_date": "2026-05-17",
+  "data_type": "case_fact_excerpt_or_legal_qa",
+  "notes": "Curated from fuzi-mingcha legal LLM training data; case facts and lawyer-style Q&A. Original facts trace back to 裁判文书 / lawyer consultation. Use as eval proxy; for forensic-grade analysis fetch 原始裁判文书 separately.",
+  "input_query": "问题：\n孩子爸爸病逝，孩子11岁，孩子爷爷在姑姑家居住，这种情况孩子能多分点抚恤金吗恤金吗？\n相关法条:\n《民法典》第一千零六十八条：父母有教育、保护未成年子女的权利和义务。未成年子女造成他人损害的，父母应当依法承担民事责任。\n《民法典》第一千一百七十九条：侵害他人造成人身损害的，应当赔偿医疗费、护理费、交通费、营养费、住院伙食补助费等为治疗和康复支出的合理费用，以及因误工减少的收入。造成残疾的，还应当赔偿辅助器具费和残疾赔偿金；造成死亡的，还应当赔偿丧葬费和死亡赔偿金。\n《民法典》第一千零六十九条：子女应当尊重父母的婚姻权利，不得干涉父母离婚、再婚以及婚后的生活。子女对父母的赡养义务，不因父母的婚姻关系变化而终止。",
+  "case_text": "对于孩子爸爸病逝后，孩子能否多分一些抚恤金，需要关注父亲生前是否有工作单位或者社会保险参保。按照《社会保险法》及其实施细则的规定，符合劳动年龄人员参加基本养老保险，其遗属享受一定比例的丧葬补助金，同时还可能享受遗属基本养老金。同时，根据《侵权责任法》的规定，通过继承等方式获得的赔偿金应当归于受害人的继承人，因此受害人去世后，子女可以继承父亲的赔偿金。\n\n总之，孩子是否能够多分抚恤金需要根据具体情况进行综合分析。建议您了解一下孩子父亲生前的工作单位和社保情况，同时可以向父亲的雇主和相关保险机构咨询相关待遇。如果还有其他问题，可以进一步提出。"
+}
