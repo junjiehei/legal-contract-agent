@@ -74,12 +74,27 @@
 | 类目 | 状态 | 文件 |
 |------|------|------|
 | probation_period | ✅ 20 | `probation_period.jsonl` |
-| penalty_clause | ⏳ pending | - |
-| service_period | ⏳ pending | - |
-| working_hours | ⏳ pending | - |
-| social_insurance | ⏳ pending | - |
-| job_change_rights | ⏳ pending | - |
-| non_compete | ⏳ pending | - |
-| confidentiality_ip | ⏳ pending | - |
-| termination | ⏳ pending | - |
-| wage_composition | ⏳ pending | - |
+| penalty_clause | ✅ 20 | `penalty_clause.jsonl` |
+| service_period | ✅ 20 | `service_period.jsonl` |
+| working_hours | ✅ 20 | `working_hours.jsonl` |
+| social_insurance | ✅ 20 | `social_insurance.jsonl` |
+| job_change_rights | ✅ 20 | `job_change_rights.jsonl` |
+| non_compete | ✅ 20 | `non_compete.jsonl` |
+| confidentiality_ip | ✅ 20 | `confidentiality_ip.jsonl` |
+| termination | ✅ 20 | `termination.jsonl` |
+| wage_composition | ✅ 20 | `wage_composition.jsonl` |
+
+**总计：200 条，10/10 类目完成。**
+
+## 抽查建议
+
+由于全部 200 条由 Claude 一次性生成，难免有错。建议用户在 P1-W3 前完成：
+- 每个类目随机抽 3-5 条人工核对
+- 重点检查 `borderline` 类目（法律解释最容易出错）
+- 发现错误的样本 id 反馈，由生成者（Claude）出修正版 `_v2`
+
+## 未来扩展
+
+- v2 添加 `region` 字段（不同地区最低工资、社平工资差异）
+- v3 添加 `case_law_reference` 字段（关联典型判例）
+- v4 增加 `synthetic_contract` 维度（多条款合并的完整合同测试 agent 端到端能力）
