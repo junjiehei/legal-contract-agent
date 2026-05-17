@@ -84,8 +84,8 @@
 | ID | 标题 | 状态 |
 |----|------|------|
 | [ADR-0001](ADR-0001-llm-selection.md) | LLM Provider Selection — DeepSeek as Primary | Accepted |
-| ADR-0002 | Vector DB + Embedding Selection | TODO (P1-W1) |
-| ADR-0003 | Orchestration: Custom vs Framework | TODO (P1-W1) |
-| ADR-0004 | Frontend: Streamlit vs Next.js | TODO (P4 前) |
-| ADR-0005 | RAG Strategy: Hybrid + Re-rank | TODO (P3) |
+| [ADR-0002](ADR-0002-vector-db-embedding.md) | Vector DB + Embedding Selection | Draft (2026-05-18) |
+| [ADR-0003](ADR-0003-orchestration.md) | Orchestration: Custom vs Framework | Draft (2026-05-18) |
+| [ADR-0004](ADR-0004-frontend.md) | Frontend: Streamlit vs Next.js | Draft (defer to P4 前) |
+| [ADR-0005](ADR-0005-rag-strategy.md) | RAG Strategy: Hybrid + Re-rank | Draft (defer to P3 W8) |
 | [ADR-0006](ADR-0006-dual-system-architecture.md) | Dual System Architecture (Pipeline + Chat Agent) | Proposed (2026-05-18) |

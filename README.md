@@ -40,7 +40,7 @@ W1（2026-05-17 起）— Foundation phase：数据采集 + Taxonomy 验证 + Ev
 
 ## 时间线
 
-- **P1 奠基** 5/19–6/8（提前到 5/17 起）— 数据 + Taxonomy + Eval 骨架
+- **P1 奠基** 5/19–6/8（提前到 5/17 起）✅ 2026-05-18 完成— 数据 + Taxonomy + Eval 骨架
 - **P2 纵向打通** 6/9–6/29 — Pipeline 单类目，引入 Tool Use + LLMClient
 - **P3 横向铺开** 6/30–7/27 — Pipeline 全 10 类目 + RAG 成熟
 - **P4 深度打磨** 7/28–8/24 — Eval 驱动改进 + 性能 + MCP server 包装
