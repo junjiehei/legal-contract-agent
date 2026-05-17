@@ -40,8 +40,16 @@ W1（2026-05-17 起）— Foundation phase：数据采集 + Taxonomy 验证 + Ev
 
 ## 时间线
 
-- **P1 奠基** 5/19–6/8（提前到 5/17 起）
-- **P2 纵向打通** 6/9–6/29
-- **P3 横向铺开** 6/30–7/27
-- **P4 深度打磨** 7/28–8/24
-- **P5 叙事 + 面试准备** 8/25–8/31
+- **P1 奠基** 5/19–6/8（提前到 5/17 起）— 数据 + Taxonomy + Eval 骨架
+- **P2 纵向打通** 6/9–6/29 — Pipeline 单类目，引入 Tool Use + LLMClient
+- **P3 横向铺开** 6/30–7/27 — Pipeline 全 10 类目 + RAG 成熟
+- **P4 深度打磨** 7/28–8/24 — Eval 驱动改进 + 性能 + MCP server 包装
+- **P5a Chat Agent v2** 8/25–8/28 — Skills + Memory + Sub-agents + MCP client（基于 Claude Agent SDK）
+- **P5b 叙事 + 面试准备** 8/29–8/31 — 架构文档 + Demo + 面试题准备
+
+## 双系统架构（详见 ADR-0006）
+
+| 系统 | 风格 | 时序 | 角色 |
+|------|------|------|------|
+| Pipeline（合同审查） | workflow | P2-P4 | 确定性 detection；P4 末包装为 MCP server |
+| Chat Agent v2（法律咨询） | agent loop | P5a | 限定 10 taxonomy 类目；通过 MCP client 调用 pipeline |

@@ -88,3 +88,4 @@
 | ADR-0003 | Orchestration: Custom vs Framework | TODO (P1-W1) |
 | ADR-0004 | Frontend: Streamlit vs Next.js | TODO (P4 前) |
 | ADR-0005 | RAG Strategy: Hybrid + Re-rank | TODO (P3) |
+| [ADR-0006](ADR-0006-dual-system-architecture.md) | Dual System Architecture (Pipeline + Chat Agent) | Proposed (2026-05-18) |
