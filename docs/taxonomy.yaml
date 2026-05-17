@@ -1,0 +1,383 @@
+# Risk Taxonomy v0.2 — 中国劳动合同审查 Agent
+# Single source of truth. 不要在此文件外另起一份。
+# 加载者：src/eval/harness.py, src/orchestration/router.py (P2)
+# 修改规则：每次变更 version += 0.0.1 + 更新 last_updated + 加 ADR
+
+version: 0.2.0
+domain: labor_contract_china
+created_date: 2026-05-16
+last_updated: 2026-05-17
+adr_refs:
+  - ADR-0001  # LLM provider selection
+
+# ====================================================================
+# 法律法规版本快照（每份文件对应 data/laws/ 下的 .md）
+# 法律修订后此处需同步更新版本号
+# ====================================================================
+legal_basis_snapshot:
+  - id: lc_law_2012
+    name: 中华人民共和国劳动合同法
+    revision: 2012修正
+    file: data/laws/national/labor_contract_law_2012.md
+  - id: labor_law_2018
+    name: 中华人民共和国劳动法
+    revision: 2018年第二次修正
+    file: data/laws/national/labor_law_2018.md
+  - id: social_insurance_law_2018
+    name: 中华人民共和国社会保险法
+    revision: 2018年第一次修正
+    file: data/laws/national/social_insurance_law_2018.md
+  - id: lc_implementation_2008
+    name: 中华人民共和国劳动合同法实施条例
+    revision: 2008
+    file: data/laws/national/lc_law_implementation_2008.md
+  - id: wage_payment_1994
+    name: 工资支付暂行规定
+    revision: 1994
+    file: data/laws/national/wage_payment_regulation_1994.md
+  - id: female_protection_2012
+    name: 女职工劳动保护特别规定
+    revision: 2012
+    file: data/laws/national/female_workers_protection_2012.md
+  - id: spc_labor_dispute_2020
+    name: 最高人民法院关于审理劳动争议案件适用法律问题的解释（一）
+    revision: 法释〔2020〕26号
+    file: data/laws/judicial/spc_labor_dispute_interpretation_1_2020.md
+
+# ====================================================================
+# 检测策略分层（决定路由）
+# cost_per_call_cny: 单次调用估算成本（人民币）
+# 实际数值会在 P4 cost benchmark 后回填
+# ====================================================================
+detection_strategies:
+  rule_only:
+    description: 纯规则/正则匹配，无 LLM 调用
+    cost_per_call_cny: 0.0
+    latency_p50_ms: 50
+    model: none
+  rule_assisted_llm:
+    description: LLM 抽取关键字段 + 规则判定
+    cost_per_call_cny: 0.001
+    latency_p50_ms: 500
+    model: deepseek-v3
+  rag_light_llm:
+    description: RAG 检索法条 + LLM 推理
+    cost_per_call_cny: 0.005
+    latency_p50_ms: 1500
+    model: deepseek-v3
+  rag_heavy_llm:
+    description: RAG + few-shot 判例 + 深度推理
+    cost_per_call_cny: 0.02
+    latency_p50_ms: 3000
+    model: deepseek-v3
+  multi_step_reasoning:
+    description: 多步推理 + 自我校验
+    cost_per_call_cny: 0.05
+    latency_p50_ms: 5000
+    model: deepseek-r1
+
+# ====================================================================
+# 10 个风险类目（v0）
+# 每个类目都自带 eval 契约（ground truth + 目标 P/R）
+# ====================================================================
+categories:
+
+  - id: probation_period
+    name_zh: 试用期合规性
+    name_en: Probation Period Compliance
+    severity_when_violated: high
+    frequency_in_real_contracts: very_high
+    legal_anchors:
+      - {law_id: lc_law_2012, articles: [19, 20, 21]}
+      - {law_id: labor_law_2018, articles: [21]}
+    detection:
+      strategy: rule_assisted_llm
+      extraction_fields:
+        - contract_duration_months
+        - probation_duration_months
+        - probation_wage_cny
+        - regular_wage_cny
+        - local_min_wage_cny
+        - same_position_min_wage_cny  # 可选
+    eval:
+      ground_truth: eval/labeled/probation_period.jsonl
+      target_precision: 0.95
+      target_recall: 0.90
+    output_violation_types:
+      - 试用期超限
+      - 试用期工资过低
+      - 试用期工资低于最低工资
+      - 重复约定试用期
+      - 不应约定试用期
+      - 试用期不包含在合同期内
+      - 试用期内违法解除
+
+  - id: penalty_clause
+    name_zh: 违约金条款合法性
+    name_en: Penalty Clause Legality
+    severity_when_violated: high
+    frequency_in_real_contracts: very_high
+    legal_anchors:
+      - {law_id: lc_law_2012, articles: [22, 23, 25, 90]}
+      - {law_id: lc_implementation_2008, articles: [16, 17, 26]}
+      - {law_id: wage_payment_1994, articles: [16]}
+    detection:
+      strategy: rule_assisted_llm
+      extraction_fields:
+        - penalty_amount_cny
+        - penalty_trigger_event  # 触发条件文本
+        - penalty_type  # 服务期/竞业限制/其他
+    eval:
+      ground_truth: eval/labeled/penalty_clause.jsonl
+      target_precision: 0.95
+      target_recall: 0.90
+    output_violation_types:
+      - 非法定情形约定违约金
+      - 违约金从工资直接扣除
+      - 服务期违约金高于培训费
+      - 服务期违约金不递减
+      - 经济损失扣除超出20%上限
+
+  - id: service_period
+    name_zh: 服务期与培训违约金
+    name_en: Service Period & Training Penalty
+    severity_when_violated: medium
+    frequency_in_real_contracts: medium
+    legal_anchors:
+      - {law_id: lc_law_2012, articles: [22, 37]}
+      - {law_id: lc_implementation_2008, articles: [16, 17, 26]}
+    detection:
+      strategy: rule_assisted_llm
+      extraction_fields:
+        - training_fee_cny
+        - service_period_years
+        - penalty_amount_cny
+        - training_type  # 专项技术培训/入职培训/其他
+        - penalty_recedes_proportionally  # bool
+    eval:
+      ground_truth: eval/labeled/service_period.jsonl
+      target_precision: 0.90
+      target_recall: 0.85
+    output_violation_types:
+      - 无专项培训约定服务期
+      - 培训费虚高或含工资差旅
+      - 违约金超过培训费
+      - 违约金不按比例递减
+      - 服务期内限制晋升
+
+  - id: working_hours
+    name_zh: 工时与加班条款
+    name_en: Working Hours & Overtime
+    severity_when_violated: medium
+    frequency_in_real_contracts: very_high
+    legal_anchors:
+      - {law_id: labor_law_2018, articles: [36, 39, 41, 44]}
+      - {law_id: wage_payment_1994, articles: [13]}
+    detection:
+      strategy: rag_light_llm
+      extraction_fields:
+        - daily_hours
+        - weekly_hours
+        - overtime_pay_rates  # {weekday, weekend, holiday} → 倍率
+        - overtime_pay_basis  # 合同约定工资 vs 基本工资
+        - hours_system  # 标准工时/综合工时/不定时
+        - approved_by_labor_bureau  # bool
+    eval:
+      ground_truth: eval/labeled/working_hours.jsonl
+      target_precision: 0.92
+      target_recall: 0.88
+    output_violation_types:
+      - 周工时超法定44小时
+      - 加班费倍率不足
+      - 加班费基数过低
+      - 加班时长超法定上限
+      - 法定节假日补休代加班费
+      - 综合工时/不定时未审批
+      - 包薪含加班费规避
+
+  - id: social_insurance
+    name_zh: 社保与公积金条款
+    name_en: Social Insurance & Housing Fund
+    severity_when_violated: high
+    frequency_in_real_contracts: very_high
+    legal_anchors:
+      - {law_id: social_insurance_law_2018, articles: [4, 10, 23, 33, 53, 57, 58, 60]}
+      - {law_id: lc_law_2012, articles: [38, 46, 50]}
+    detection:
+      strategy: rag_light_llm
+      extraction_fields:
+        - insurance_coverage  # 五险中包含哪些
+        - contribution_base_cny
+        - actual_wage_cny
+        - probation_period_covered  # bool
+        - housing_fund_base_cny
+    eval:
+      ground_truth: eval/labeled/social_insurance.jsonl
+      target_precision: 0.95
+      target_recall: 0.92
+    output_violation_types:
+      - 自愿放弃社保
+      - 试用期不缴社保
+      - 缴费基数低于实际工资
+      - 漏缴险种
+      - 现金补贴代替社保
+
+  - id: job_change_rights
+    name_zh: 工作内容/地点变更权
+    name_en: Job Content/Location Change Rights
+    severity_when_violated: medium
+    frequency_in_real_contracts: very_high
+    legal_anchors:
+      - {law_id: lc_law_2012, articles: [17, 35, 40, 41]}
+      - {law_id: female_protection_2012, articles: [6]}
+    detection:
+      strategy: rag_light_llm
+      extraction_fields:
+        - unilateral_change_clause  # 用人单位单方调整条款原文
+        - cross_city_clause  # bool
+        - performance_linked_adjustment  # bool
+    eval:
+      ground_truth: eval/labeled/job_change_rights.jsonl
+      target_precision: 0.88
+      target_recall: 0.85
+    output_violation_types:
+      - 用人单位单方调岗霸王条款
+      - 业绩不达标直接降薪
+      - 异地调动未协商
+      - 拒绝调岗即旷工
+      - 末位淘汰
+
+  - id: non_compete
+    name_zh: 竞业限制条款
+    name_en: Non-Compete Clause
+    severity_when_violated: high
+    frequency_in_real_contracts: high
+    legal_anchors:
+      - {law_id: lc_law_2012, articles: [23, 24]}
+      - {law_id: spc_labor_dispute_2020, articles: [36, 37, 38, 39, 40]}
+    detection:
+      strategy: rag_heavy_llm
+      extraction_fields:
+        - employee_role  # 高管/高级技术/其他/普通
+        - non_compete_period_months
+        - economic_compensation_cny_per_month
+        - employee_pre_term_avg_wage_cny
+        - geographic_scope
+        - business_scope
+        - penalty_breach_cny
+    eval:
+      ground_truth: eval/labeled/non_compete.jsonl
+      target_precision: 0.90
+      target_recall: 0.85
+    output_violation_types:
+      - 主体不适用（普通员工）
+      - 期限超2年
+      - 范围过宽
+      - 经济补偿过低
+      - 经济补偿一次性预付
+      - 在职工资折抵离职补偿
+      - 违约金过高失衡
+
+  - id: confidentiality_ip
+    name_zh: 保密与知识产权条款
+    name_en: Confidentiality & IP
+    severity_when_violated: medium
+    frequency_in_real_contracts: high
+    legal_anchors:
+      - {law_id: lc_law_2012, articles: [23, 25]}
+      # 外部法律（不在本仓库管辖），列出但不强制加载
+    external_legal_refs:
+      - 中华人民共和国反不正当竞争法第9条
+      - 中华人民共和国专利法第6条
+      - 中华人民共和国著作权法第18条
+    detection:
+      strategy: rag_heavy_llm
+      extraction_fields:
+        - confidentiality_period_years
+        - confidentiality_scope
+        - ip_assignment_scope  # 职务/非职务
+        - has_economic_compensation  # bool（如有则可能是变相竞业）
+    eval:
+      ground_truth: eval/labeled/confidentiality_ip.jsonl
+      target_precision: 0.88
+      target_recall: 0.82
+    output_violation_types:
+      - 保密为名行竞业限制（无补偿）
+      - 保密对象过宽（含已公开信息）
+      - 知识产权全部归公司（含非职务作品）
+      - 违反保密约定违约金（不属第25条）
+      - 业余/离职后创作归公司
+
+  - id: termination
+    name_zh: 解除与终止条款
+    name_en: Termination Clauses
+    severity_when_violated: high
+    frequency_in_real_contracts: very_high
+    legal_anchors:
+      - {law_id: lc_law_2012, articles: [36, 37, 38, 39, 40, 41, 42, 43, 46, 47, 50, 87]}
+      - {law_id: lc_implementation_2008, articles: [27]}
+      - {law_id: female_protection_2012, articles: [5, 6, 7]}
+    detection:
+      strategy: rag_heavy_llm
+      extraction_fields:
+        - termination_grounds  # 用人单位可解除的情形列表
+        - economic_compensation_formula
+        - economic_compensation_basis  # 是否含奖金/津贴
+        - probation_termination_clause
+        - female_three_period_protection  # bool
+    eval:
+      ground_truth: eval/labeled/termination.jsonl
+      target_precision: 0.92
+      target_recall: 0.88
+    output_violation_types:
+      - 试用期任意解除
+      - 三期内违法解除
+      - 工伤/医疗期内解除
+      - 经济补偿基数过低
+      - 末位即解除
+      - 未通知工会
+      - 合同期满终止未补偿
+
+  - id: wage_composition
+    name_zh: 工资构成与计算基数
+    name_en: Wage Composition & Calculation Basis
+    severity_when_violated: high
+    frequency_in_real_contracts: very_high
+    legal_anchors:
+      - {law_id: labor_law_2018, articles: [48, 50]}
+      - {law_id: wage_payment_1994, articles: [5, 6, 7, 9, 13, 16]}
+      - {law_id: lc_law_2012, articles: [20, 47]}
+    detection:
+      strategy: multi_step_reasoning  # 多条款关联：基本工资 / 加班费 / 经济补偿 / 最低工资
+      extraction_fields:
+        - basic_wage_cny
+        - total_wage_cny
+        - overtime_pay_basis_cny
+        - wage_payment_period  # 月/季/不定
+        - local_min_wage_cny
+        - payment_method  # 现金/转账/实物
+    eval:
+      ground_truth: eval/labeled/wage_composition.jsonl
+      target_precision: 0.92
+      target_recall: 0.88
+    output_violation_types:
+      - 基本工资低于最低工资
+      - 加班费基数过低
+      - 工资支付周期超月
+      - 非法定货币支付
+      - 病假工资低于最低80%
+      - 经济补偿基数仅基本工资
+      - 未休年假补偿不足300%
+
+# ====================================================================
+# 类目级别汇总（用于路由统计）
+# ====================================================================
+summary:
+  total_categories: 10
+  strategy_distribution:
+    rule_only: 0
+    rule_assisted_llm: 3   # probation, penalty, service_period
+    rag_light_llm: 3       # working_hours, social_insurance, job_change
+    rag_heavy_llm: 3       # non_compete, confidentiality, termination
+    multi_step_reasoning: 1  # wage_composition
+  eval_total_samples: 200    # 20 × 10

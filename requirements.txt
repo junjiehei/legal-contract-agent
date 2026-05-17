@@ -1,0 +1,7 @@
+datasets==4.8.5
+huggingface_hub==1.15.0
+pypdf==6.11.0
+python-docx==1.2.0
+PyYAML==6.0.3
+
+# 见 venv 完整列表：pip list
