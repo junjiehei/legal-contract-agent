@@ -12,25 +12,25 @@
   - 目标文件：`labor_law_2018.md`
   - 来源：flk.npc.gov.cn
 
-- [ ] **中华人民共和国社会保险法** (2018修正)
+- [x] **中华人民共和国社会保险法** (2018修正)
   - 目标文件：`social_insurance_law_2018.md`
   - 来源：flk.npc.gov.cn
 
-- [ ] **劳动合同法实施条例** (2008)
+- [x] **劳动合同法实施条例** (2008)
   - 目标文件：`lc_law_implementation_2008.md`
   - 来源：[中国政府网 gov.cn](https://www.gov.cn)
 
-- [ ] **工资支付暂行规定** (1994) — P1
+- [x] **工资支付暂行规定** (1994) — P1
   - 目标文件：`wage_payment_regulation_1994.md`
   - 来源：gov.cn
 
-- [ ] **女职工劳动保护特别规定** (2012) — P1
+- [x] **女职工劳动保护特别规定** (2012) — P1
   - 目标文件：`female_workers_protection_2012.md`
   - 来源：gov.cn
 
 ## 司法解释（judicial/）— P0
 
-- [ ] **最高人民法院关于审理劳动争议案件适用法律若干问题的解释（一）** (2020)
+- [x] **最高人民法院关于审理劳动争议案件适用法律若干问题的解释（一）** (2020)
   - 目标文件：`spc_labor_dispute_interpretation_1_2020.md`
   - 来源：[最高法 court.gov.cn](https://www.court.gov.cn)
 
