@@ -17,6 +17,14 @@ W1（2026-05-17 起）— Foundation phase：数据采集 + Taxonomy 验证 + Ev
 | `src/` | 业务代码（P2 起） |
 | `scripts/` | 采集和工具脚本 |
 
+
+
+## 运行中的服务
+
+| 服务 | 状态 | 端口 | 存储 |
+|------|------|------|------|
+| Qdrant 向量库 | running (Docker) | 6333 (HTTP), 6334 (gRPC) | `/data/qdrant` |
+
 ## 技术栈
 
 | 层 | 选型 | 备注 |
