@@ -1,6 +1,6 @@
 # ADR-0004: Frontend — Streamlit vs Next.js vs CLI
 
-**Status**: Draft (defer until P4 前)
+**Status**: Superseded by [ADR-0010](ADR-0010-frontend-revision.md) on 2026-05-20
 **Date**: TODO
 **Deciders**: Dylan
 **Related**: ADR-0006 (Dual System Architecture)

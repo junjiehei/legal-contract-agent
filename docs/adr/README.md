@@ -86,6 +86,10 @@
 | [ADR-0001](ADR-0001-llm-selection.md) | LLM Provider Selection — DeepSeek as Primary | Accepted |
 | [ADR-0002](ADR-0002-vector-db-embedding.md) | Vector DB + Embedding Selection | Draft (2026-05-18) |
 | [ADR-0003](ADR-0003-orchestration.md) | Orchestration: Custom vs Framework | Draft (2026-05-18) |
-| [ADR-0004](ADR-0004-frontend.md) | Frontend: Streamlit vs Next.js | Draft (defer to P4 前) |
+| [ADR-0004](ADR-0004-frontend.md) | Frontend: Streamlit vs Next.js | **Superseded by ADR-0010** |
 | [ADR-0005](ADR-0005-rag-strategy.md) | RAG Strategy: Hybrid + Re-rank | Draft (defer to P3 W8) |
 | [ADR-0006](ADR-0006-dual-system-architecture.md) | Dual System Architecture (Pipeline + Chat Agent) | Proposed (2026-05-18) |
+| [ADR-0007](ADR-0007-confidentiality.md) | Confidentiality Architecture | Proposed (2026-05-20) |
+| [ADR-0008](ADR-0008-multimodal-input.md) | Multimodal Input Strategy | Proposed (2026-05-20) |
+| [ADR-0009](ADR-0009-mcp-integration.md) | MCP Integration | Proposed (2026-05-20) |
+| [ADR-0010](ADR-0010-frontend-revision.md) | Frontend Revision (Supersedes ADR-0004) | Proposed (2026-05-20) |
