@@ -6,7 +6,9 @@
 
 ## 状态
 
-W1（2026-05-17 起）— Foundation phase：数据采集 + Taxonomy 验证 + Eval 骨架。
+**P1 已完成（2026-05-18）** — 数据采集、Taxonomy v0.2、Eval 骨架（200 条 ground truth + harness + 3 baseline）。
+
+当前等待 P2 启动（计划 2026-06-09）。
 
 ## 项目导航
 

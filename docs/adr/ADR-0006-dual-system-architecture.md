@@ -14,7 +14,7 @@ P1 W1 收尾时（2026-05-18），项目原定为单一确定性合同审查 pip
 
 驱动重新评估的原因：
 
-- **面试需求**：2026 年单纯 RAG pipeline 已不足以体现"跟得上业界" — MCP / Skills / Memory / Sub-agents 是当前面试官期待看到的技术
+- **review需求**：2026 年单纯 RAG pipeline 已不足以体现"跟得上业界" — MCP / Skills / Memory / Sub-agents 是当前审查者期待看到的技术
 - **产品互补**：合同审查（一次性结构化输入）+ 法律咨询（持续对话）能覆盖更完整的劳动者需求场景
 - **技术深度学习**：用户希望在真实项目中应用 2026 主流 agent 技术，而不是看教程
 
@@ -23,7 +23,7 @@ P1 W1 收尾时（2026-05-18），项目原定为单一确定性合同审查 pip
 按优先级：
 
 1. **不破坏 P2-P4 主线进度** — pipeline 是项目的根基，必须先稳
-2. 面试 portfolio 完整度（覆盖 2026 主流 agent 技术）
+2. 覆盖广度（覆盖 2026 主流 agent 技术）
 3. 产品用户场景覆盖
 4. 避免"用了 N 个技术但都浅尝辄止"的反效果
 
@@ -70,13 +70,13 @@ P1 W1 收尾时（2026-05-18），项目原定为单一确定性合同审查 pip
 | P3 (6/30-7/27) | 横向铺开 10 类目 + RAG 成熟 | （不动）|
 | P4 (7/28-8/24) | Eval 打磨 + 性能 + observability；末期包装为 MCP server | （不动）|
 | P5a (8/25-8/28) | （冻结）| 启动：Claude Agent SDK + Skills + Memory + Sub-agents + MCP client |
-| P5b (8/29-8/31) | （冻结）| 架构文档 + Demo + 面试准备 |
+| P5b (8/29-8/31) | （冻结）| 架构文档 + Demo + review准备 |
 
 ### Why this option
 
 1. **架构边界清晰**：pipeline 是确定性的（eval 信号干净），chat agent 是开放的（灵活但 eval 难度高）。两者职责清晰，可独立 eval 和优化。
 
-2. **MCP 集成是关键 wow factor**：在 Claude Code 里能直接调用我们的合同审查 = 强 demo。同时这种"agent ecosystem"叙事在 2026 面试中很有杀伤力。
+2. **MCP 集成是关键 wow factor**：在 Claude Code 里能直接调用我们的合同审查 = 强 demo。同时这种"agent ecosystem"叙事在 2026 review中很有杀伤力。
 
 3. **scope 可控**：chat agent 限定在 10 taxonomy 类目相关问题，不做通用法律咨询。eval 复用 200 条样本 + 加 30-50 条对话样本。
 
@@ -86,7 +86,7 @@ P1 W1 收尾时（2026-05-18），项目原定为单一确定性合同审查 pip
 
 | Option | Reason rejected |
 |--------|-----------------|
-| 1 (pipeline only) | 2026 面试要求 agent 技术信号，单 pipeline 缺乏"跟得上业界"的证据 |
+| 1 (pipeline only) | 2026 review要求 agent 技术信号，单 pipeline 缺乏"跟得上业界"的证据 |
 | 2 (chat agent only) | 合同审查是结构化确定性任务，强行做成 agent loop 会破坏 eval 信号 4 倍以上 |
 | 4 (完全分离) | 失去 MCP 集成的 wow factor，无法讲"两系统互通"的架构叙事 |
 
@@ -96,7 +96,7 @@ P1 W1 收尾时（2026-05-18），项目原定为单一确定性合同审查 pip
 
 - 完整覆盖 2026 主流 agent 技术（Tool Use, MCP server/client, Skills, Memory, Sub-agents, Harness）
 - Pipeline 和 chat agent 各自采用最优架构（workflow vs agent loop）
-- 面试叙事强：能讲清楚"workflow vs agent 的取舍 + 两者通过 MCP 集成"
+- review叙事强：能讲清楚"workflow vs agent 的取舍 + 两者通过 MCP 集成"
 - 产品扩展性：未来新增 skill 不影响 pipeline 稳定性
 
 ### Negative / Accepted Tradeoffs

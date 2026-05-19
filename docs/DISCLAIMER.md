@@ -6,7 +6,7 @@
 
 ### 本工具的性质
 
-本项目（`legal-contract-agent`）是一个**研究性、portfolio 级**的 AI 系统，用于演示**中国劳动合同自动审查**的技术架构。**不构成法律意见**，**不能替代执业律师的专业咨询**。
+本项目（`legal-contract-agent`）是一个**研究性、研究级**的 AI 系统，用于演示**中国劳动合同自动审查**的技术架构。**不构成法律意见**，**不能替代执业律师的专业咨询**。
 
 ### 使用本工具时请知悉
 
@@ -38,7 +38,7 @@
 本工具可作为：
 - 学习 LLM agent 架构、RAG、eval 方法的实例
 - 中文法律 NLP 的参考实现
-- portfolio 项目的脚手架
+- 研究项目的脚手架
 
 不可作为：
 - 商业产品直接上线（需要律师审核 + 合规认证）
@@ -59,7 +59,7 @@
 
 ### Nature of This Tool
 
-This project (`legal-contract-agent`) is a **research-grade, portfolio-level** AI system demonstrating the technical architecture for **automated review of Chinese labor contracts**. It is **NOT legal advice** and **CANNOT replace consultation with a licensed lawyer**.
+This project (`legal-contract-agent`) is a **research-grade, research-grade** AI system demonstrating the technical architecture for **automated review of Chinese labor contracts**. It is **NOT legal advice** and **CANNOT replace consultation with a licensed lawyer**.
 
 ### Please Note When Using
 

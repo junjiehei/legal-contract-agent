@@ -32,7 +32,7 @@
 
 按优先级：
 
-1. **代码可解释性**（最高）：每行代码我能讲清楚为什么这么写。面试时必须能 walk through 完整路径。
+1. **代码可解释性**（最高）：每行代码我能讲清楚为什么这么写。review 时必须能 walk through 完整路径。
 2. **不被框架锁死**：LangChain 历史上 breaking change 频繁；选了框架≠不能维护
 3. **学习曲线**：solo dev，时间宝贵；框架学习成本 vs 自研代码成本要算清
 4. **未来扩展性**：P5a 要做 chat agent，orchestration 选型不能阻塞 chat agent 用 Claude Agent SDK
@@ -55,7 +55,7 @@
 
 理由（如同意则覆盖到 Decision 主体）：
 - 项目规模小（~2000 行核心代码估算），不需要框架抽象
-- 自研让每行代码都能讲清楚 → 面试最大优势
+- 自研让每行代码都能讲清楚 → review最大优势
 - LlamaIndex 的 retrieval 组件成熟（`VectorStoreIndex` + retriever + reranker），自己写不如复用
 - P5a chat agent 用 Claude Agent SDK（per ADR-0006），与 pipeline 完全解耦
 - 不引入 LangChain → 避免 breaking change 风险
@@ -78,7 +78,7 @@ TODO
 
 ### Positive
 TODO（建议）：
-- 核心 orchestration 每行代码可解释，面试可逐行讲
+- 核心 orchestration 每行代码可解释，review可逐行讲
 - LlamaIndex retrieval 成熟，节省 P2/P3 时间
 - 不锁死，未来需求变化可只换替 retrieval 层
 - 与 P5a chat agent（Claude Agent SDK）解耦
