@@ -2,6 +2,8 @@
 
 面向劳动者的 AI 合同审查系统：识别违法/不利条款、引用相关法条、给出修改建议。
 
+> **⚠️ 本工具不构成法律意见**。所有 AI 输出仅供参考，重要决策须经持牌律师复核。详见 [`docs/DISCLAIMER.md`](docs/DISCLAIMER.md)。
+
 ## 状态
 
 W1（2026-05-17 起）— Foundation phase：数据采集 + Taxonomy 验证 + Eval 骨架。
@@ -10,6 +12,9 @@ W1（2026-05-17 起）— Foundation phase：数据采集 + Taxonomy 验证 + Ev
 
 | 路径 | 用途 |
 |------|------|
+| `docs/ARCHITECTURE.md` | **架构总览 + mermaid 图**（先读这个） |
+| `docs/EVAL_GUIDE.md` | 评测体系详解（指标、阈值、baseline） |
+| `docs/DISCLAIMER.md` | 免责声明（法律 AI 必读） |
 | `data/INVENTORY.md` | 数据资产清单（**每次新增数据必须更新**） |
 | `data/laws/MANIFEST.md` | 法律采集 checklist（W1 当前任务） |
 | `docs/adr/` | 架构决策记录 |
@@ -45,7 +50,7 @@ W1（2026-05-17 起）— Foundation phase：数据采集 + Taxonomy 验证 + Ev
 - **P3 横向铺开** 6/30–7/27 — Pipeline 全 10 类目 + RAG 成熟
 - **P4 深度打磨** 7/28–8/24 — Eval 驱动改进 + 性能 + MCP server 包装
 - **P5a Chat Agent v2** 8/25–8/28 — Skills + Memory + Sub-agents + MCP client（基于 Claude Agent SDK）
-- **P5b 叙事 + 面试准备** 8/29–8/31 — 架构文档 + Demo + 面试题准备
+- **P5b 文档 + Demo 发布** 8/29–8/31 — 架构文档 + Demo + 文档归档
 
 ## 双系统架构（详见 ADR-0006）
 

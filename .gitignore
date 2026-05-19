@@ -34,3 +34,6 @@ Thumbs.db
 .env
 .env.local
 *.key
+
+# Private prep notes — never commit
+interview/

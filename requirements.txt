@@ -1,7 +1,56 @@
-datasets==4.8.5
-huggingface_hub==1.15.0
-pypdf==6.11.0
-python-docx==1.2.0
-PyYAML==6.0.3
+# Python dependencies for legal-contract-agent
+# Pinned to versions verified to work as of 2026-05-18
+# Use: pip install -r requirements.txt
 
-# 见 venv 完整列表：pip list
+# ===== Data processing (P1) =====
+python-docx==1.2.0        # docx 解析（合同 + 法律文档）
+pypdf==6.11.0             # PDF 文本提取
+PyYAML==6.0.3             # taxonomy.yaml 加载
+
+# ===== HuggingFace ecosystem (P1) =====
+huggingface_hub==1.15.0   # 模型下载（通过 hf-mirror）
+datasets==4.8.5           # 数据集加载
+
+# ===== LLM clients (P2 起激活) =====
+# 当前 P1 末未启用，但 P2 W4 开始即用
+openai>=1.50.0            # DeepSeek / OpenAI API 兼容（OpenAI SDK 兼容 DeepSeek）
+anthropic>=0.40.0         # Claude API（P4 跨模型 benchmark + chat agent）
+httpx>=0.27.0             # 异步 HTTP（LLM client 底层）
+tenacity>=8.5.0           # retry 装饰器（LLM 调用容错）
+
+# ===== Vector DB + Retrieval (P3 起激活) =====
+qdrant-client>=1.10.0     # Qdrant 客户端
+sentence-transformers>=3.0.0  # bge-large-zh embedding 加载
+# Note: bge 模型本身已通过 huggingface_hub 下载到 /data/hf-cache
+
+# ===== RAG retrieval (P3 起激活) =====
+llama-index-core>=0.11.0  # 仅 retrieval 部分（per ADR-0003）
+llama-index-vector-stores-qdrant>=0.3.0  # Qdrant 集成
+
+# ===== Validation & schema =====
+pydantic>=2.8.0           # Prediction / Output schema 验证
+
+# ===== Web UI (P4 起激活) =====
+# fastapi>=0.115.0
+# uvicorn[standard]>=0.30.0
+# jinja2>=3.1.0
+# python-multipart>=0.0.9  # 文件上传
+
+# ===== MCP server (P4 末激活) =====
+# mcp>=0.1.0                # Anthropic MCP SDK
+# fastmcp>=0.4.0            # 高级 MCP server 框架（可选）
+
+# ===== Multimodal (P3-P4，per ADR-0008 待写) =====
+# Pillow>=10.0.0            # 图片处理
+# paddleocr>=2.8.0          # 中文 OCR
+# 或 cnocr / easyocr 备选
+
+# ===== Dev tools =====
+pytest>=8.0.0             # 测试
+pytest-cov>=5.0.0         # 覆盖率
+ruff>=0.6.0               # 格式化 + linter
+
+# ===== 后期可能加 =====
+# langfuse>=2.40.0         # Observability（P4 起）
+# orjson>=3.10.0           # 快速 JSON
+# rich>=13.0.0             # CLI 输出美化
