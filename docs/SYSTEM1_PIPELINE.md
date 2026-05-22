@@ -184,7 +184,7 @@ class Finding:
     violated_law: list[str] = field(default_factory=list)  # ["劳动合同法 第十九条"]
     law_quotes: list[str] = field(default_factory=list)    # 法条原文（aggregator 填充）
     reason: str = ""                     # 为什么违法/不利
-    suggestion: str = ""                 # 修改建议（劳动者视角）
+    suggestion: str = ""                 # 客观建议（依法：合规基准 + 差距 + 救济方向）
     evidence_quote: str = ""             # 条款里最相关的片段
     confidence: float = 0.0
     detector_strategy: str = ""          # 命中时用的策略 tier
