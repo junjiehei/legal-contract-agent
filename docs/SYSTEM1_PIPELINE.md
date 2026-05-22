@@ -167,6 +167,8 @@ class IngestResult:
     used_ocr: bool = False
     used_vlm: bool = False
     total_pages: int = 1
+    content_gate: "ContentGateResult | None" = None     # §3.3：合同类型+语言，交下游 Router B
+    routing_decision: "RoutingDecision | None" = None   # §3.3：路由留痕，端到端可观测
 
 # ---- Stage 3/4 产物 ----
 Severity = Literal["high", "medium", "low", "none"]
@@ -223,7 +225,7 @@ class ReviewReport:
 | # | 模块 | 入 | 出 | 关键依赖 |
 |---|------|----|----|---------|
 | ① | Format Detection | 文件 | `FormatDetectionResult` | 见 §3.2（重点） |
-| ② | Routing | `FormatDetectionResult` | `parser_id` | 读 `suggested_parser` |
+| ② | Routing | `FormatDetectionResult` + 配置 | `ProcessingPlan` | 决策逻辑见 §3.3 |
 | ③ | Parsing | 文件 + parser_id | raw text + 布局信息 | python-docx/pypdf/PaddleOCR/Qwen-VL |
 | ④ | Normalization | raw text | 干净文本 | 全半角/标点/页眉页脚/断行 |
 | ⑤ | Segmentation | 干净文本 | `list[Clause]` | 第X条/第X章 标记 |
@@ -269,9 +271,8 @@ class PDFShapeDetection:
     image_count: int
     has_signature: bool                  # 检出签名页图像 / /Sig 域
     has_form_fields: bool                # /AcroForm
-    suggested_parser: str                # "pypdf" / "paddleocr" / "pdf_per_page_hybrid"
-    requires_manual_review: bool = False
-    signals: dict = field(default_factory=dict)  # 原始信号留痕，便于调试
+    signals: dict = field(default_factory=dict)
+    # signals 必含 per_page_chars: list[int] —— Routing 据此排逐页 ParseStep（§3.3），勿删
 
 @dataclass
 class DocxShapeDetection:
@@ -282,7 +283,6 @@ class DocxShapeDetection:
     image_count: int
     has_tracked_changes: bool            # 修订痕迹（双方谈判稿）
     char_count: int
-    suggested_parser: str = "python-docx"
 
 @dataclass
 class ImageShapeDetection:
@@ -293,7 +293,6 @@ class ImageShapeDetection:
     blur_score: float                    # Laplacian 方差，越低越糊
     estimated_rotation: float            # 度
     has_text_regions: bool               # 轻量文本检测
-    suggested_parser: str                # "paddleocr"（清晰）/ "qwen-vl"（差/手写）
 
 @dataclass
 class TextShapeDetection:
@@ -302,11 +301,11 @@ class TextShapeDetection:
     encoding: str                        # "utf-8" / "gb18030" …
     char_count: int
     has_article_markers: bool            # 含"第X条"
-    suggested_parser: str = "text_reader"
 
 @dataclass
 class FormatDetectionResult:
-    """Module ① 总产物 —— 分层 Facade（Option C）。
+    """Module ① 总产物 —— 分层 Facade（Option C）。纯描述：只回答"是什么/长什么样/多确定"，
+    不做"选 parser / proceed-reject"等决策（在 Routing §3.3）。
     identity 必有；shape 四选一（按 detected_format 填一个）。"""
     identity: IdentityDetection
     pdf_shape:   Optional[PDFShapeDetection]   = None
@@ -324,30 +323,19 @@ class FormatDetectionResult:
         return self.shape.primary_type if self.shape else "unknown"
 
     @property
-    def suggested_parser(self) -> str:
-        return self.shape.suggested_parser if self.shape else "none"
-
-    @property
     def overall_confidence(self) -> float:
-        """关键：身份置信 × 形态置信。任一不确定都拉低整体。"""
+        """身份置信 × 形态置信（纯指标/事实，非决策）。任一不确定都拉低整体。"""
         shape_conf = self.shape.confidence if self.shape else 0.0
         return self.identity.confidence * shape_conf
 
-    @property
-    def routing_recommendation(self) -> str:
-        """供 §3.2.7 决策表 / Module ② 直接消费。"""
-        c = self.overall_confidence
-        if not self.identity.safe_to_process:        return "reject"
-        if c >= 0.9:                                 return "proceed"
-        if c >= 0.6:                                 return "proceed_with_warning"
-        if c >= 0.3:                                 return "proceed_manual_review"
-        return "reject"
+    # ❌ 已删除 suggested_parser / routing_recommendation —— 选 parser 与 proceed/reject 都是
+    #    【决策】，已移交 Routing（§3.3）；① 只交付描述（含 signals.per_page_chars）。
 ```
 
 > **为什么选 Option C（分层 Facade）而不是扁平大 dataclass / 继承多态**：
 > - 扁平大 dataclass：把 PDF/DOCX/IMAGE 字段全塞一个类，大量字段对当前格式无意义（`page_count` 对 docx？），易误用。
 > - 继承多态（`PDFResult(FormatResult)`…）：调用方要 `isinstance` 分支，且无法表达"PDF 但也想留 image 信息"。
-> - **Facade**：`identity` 永远在；`shape` 是统一入口，`.primary_type/.suggested_parser/.overall_confidence` 屏蔽差异；要细节时再下钻到 `pdf_shape`。调用方 90% 只碰便捷属性。
+> - **Facade**：`identity` 永远在；`shape` 是统一入口，`.primary_type/.overall_confidence` 屏蔽差异；要细节时再下钻到 `pdf_shape`。调用方 90% 只碰便捷属性。
 
 #### 3.2.3 Step 1 — Identity Detection（四信号 + 仲裁）
 
@@ -444,10 +432,10 @@ def detect_pdf_shape(raw: bytes) -> PDFShapeDetection:
     coverage      = pages_w_text / n
     cpp           = total_chars / n
 
-    # 决策：
-    if   coverage >= 0.9 and cpp >= 100:  ptype, parser, conf = "text",    "pypdf",               0.95
-    elif coverage <= 0.1:                 ptype, parser, conf = "scanned", "paddleocr",            0.90
-    else:                                 ptype, parser, conf = "mixed",   "pdf_per_page_hybrid",  0.80
+    # 形态判定（只描述，不选 parser —— 那是 Routing 的事）：
+    if   coverage >= 0.9 and cpp >= 100:  ptype, conf = "text",    0.95
+    elif coverage <= 0.1:                 ptype, conf = "scanned", 0.90
+    else:                                 ptype, conf = "mixed",   0.80
 
     return PDFShapeDetection(
         primary_type=ptype, confidence=conf, page_count=n,
@@ -455,15 +443,13 @@ def detect_pdf_shape(raw: bytes) -> PDFShapeDetection:
         image_count=sum(per_page_imgs),
         has_signature=_detect_signature(reader),
         has_form_fields=("/AcroForm" in reader.trailer.get("/Root", {})),
-        suggested_parser=parser,
-        requires_manual_review=(ptype in ("mixed",) and conf < 0.85),
         signals={"per_page_chars": per_page_chars, "per_page_imgs": per_page_imgs},
     )
 ```
 
 阈值（可调，进 config）：`TEXT_PAGE_MIN=50` 字/页算"有文字层"；`coverage≥0.9 & cpp≥100` → text；`coverage≤0.1` → scanned；中间 → **mixed（逐页路由，已定：完整处理）**。
 
-> **mixed / pdf_hybrid 处理（已定稿）**：不退化成"整篇 OCR"。`pdf_per_page_hybrid` parser 逐页看 `signals.per_page_chars[i]`：该页有文字层走 pypdf，无文字层走 PaddleOCR，最后按页码拼回。Clause 的 `page` 字段保证拼回后定位正确。
+> **mixed 处理（已定稿）**：不退化成"整篇 OCR"。① 只在 `signals.per_page_chars` 里如实记录每页字符数；**由 Routing（§3.3）据此排出逐页 `ParseStep`**（有文字层的页 → pypdf，无的 → PaddleOCR），③ `execute_plan` 执行后按页码拼回。Clause 的 `page` 字段保证拼回后定位正确。
 
 **DOCX / IMAGE / TEXT 形态**（更简单）：
 
@@ -506,7 +492,7 @@ def detect_format(path: str, raw: bytes, claimed_mime: str = "") -> FormatDetect
     identity = detect_identity(path, raw, claimed_mime)
     res = FormatDetectionResult(identity=identity)
     if not identity.safe_to_process:
-        return res                                # shape 全 None → routing_recommendation == "reject"
+        return res                                # shape 全 None → Routing 判 reject（§3.3）
 
     f = identity.detected_format
     if   f in (SourceFormat.PDF_TEXT, SourceFormat.PDF_SCANNED, SourceFormat.PDF_MIXED):
@@ -520,7 +506,7 @@ def detect_format(path: str, raw: bytes, claimed_mime: str = "") -> FormatDetect
     return res
 ```
 
-#### 3.2.6 置信度模型：乘法 + 阈值带
+#### 3.2.6 置信度模型：为什么用乘法
 
 **为什么乘法而非取最小/平均**：身份与形态是**独立的不确定来源**，要联合可信才整体可信。任一环节弱 → 整体应被拉低。乘法天然满足（`0.9 × 0.6 = 0.54`，落入强警告带），取 min 会掩盖"两个都中等"的复合风险。
 
@@ -528,31 +514,15 @@ def detect_format(path: str, raw: bytes, claimed_mime: str = "") -> FormatDetect
 overall_confidence = identity.confidence × shape.confidence
 ```
 
-| overall | routing_recommendation | 行为 |
-|---------|------------------------|------|
-| ≥ 0.90 | `proceed` | 静默处理 |
-| 0.60–0.90 | `proceed_with_warning` | 处理 + `IngestResult.warnings` 记一条 |
-| 0.30–0.60 | `proceed_manual_review` | 处理 + 强警告 + `requires_manual_review=True`，前端标注"建议人工复核" |
-| < 0.30 | `reject` | 不自动处理，回提示让用户确认/换文件 |
-| `safe_to_process=False` | `reject` | 直接拒（与分数无关） |
+这是一个**纯指标（事实）**。把分数翻译成动作（proceed / warning / manual_review / reject 的阈值带）是【决策】，已移交 Routing —— 见 §3.3 的 `RoutingThresholds` 与置信度分档。
 
-#### 3.2.7 路由决策表（Module ① → Module ②）
+#### 3.2.7 形态 → 处理策略：已移交 Routing
 
-Module ② 不重新判断，直接读 `result.suggested_parser` + `routing_recommendation`：
+原先这里是一张"形态 → parser"决策表。按 sense/decide/act 拆分（§3.3.1），**这是【决策】，已整体移交 Routing**：
+- parser 选择、逐页计划、OCR→VLM 兜底 → §3.3 的 `ProcessingPlan` / `ParseStep`；
+- proceed / manual_review / reject → §3.3 的置信度分档。
 
-| detected_format | primary_type | suggested_parser | 下游 Parser | used_ocr/vlm |
-|-----------------|--------------|------------------|-------------|--------------|
-| DOCX | text / table_heavy / tracked_changes | python-docx | `DocxParser` | – |
-| DOCX | empty | python-docx | `DocxParser`（产 warning） | – |
-| PDF | text | pypdf | `PdfTextParser` | – |
-| PDF | scanned | paddleocr | `OcrParser` | ocr |
-| PDF | mixed | pdf_per_page_hybrid | `PdfHybridParser`（逐页） | ocr（部分页） |
-| PDF | encrypted/corrupted | – | reject + warning | – |
-| IMAGE | clear_text | paddleocr | `OcrParser` | ocr |
-| IMAGE | low_quality / handwritten_suspected | qwen-vl | `VlmParser` | vlm |
-| TEXT/MARKDOWN | plain/markdown | text_reader | `TextParser` | – |
-
-> 还有一条**运行时降级边**（不在静态表里）：`OcrParser` 跑完若 PaddleOCR 置信度 < 0.85 → 自动转 `VlmParser` 兜底（ADR-0008）。这条在 Parsing 内部触发，会把 `used_vlm=True`。
+① 在此只交付**描述**（`FormatDetectionResult`），其中 `pdf_shape.signals.per_page_chars` 是 Routing 排逐页计划的关键输入。
 
 #### 3.2.8 失败与降级
 
@@ -561,34 +531,293 @@ Module ② 不重新判断，直接读 `result.suggested_parser` + `routing_reco
 | Step 1 `UNKNOWN` / 可执行伪装 | `safe_to_process=False` → reject，不进 Step 2 |
 | PDF 加密无法解 | `primary_type="encrypted"` → reject + warning「需密码」 |
 | PDF 损坏 pypdf 打不开 | `primary_type="corrupted"` → reject + warning「文件损坏」 |
-| mixed 但 confidence 低 | 仍处理（逐页 hybrid）+ `requires_manual_review` |
+| mixed 但 confidence 低 | 仍处理（Routing 排逐页计划）→ Routing 判 manual_review（§3.3） |
 | 扩展名/MIME 冲突 | 信 magic，降置信，issue 留痕，**不报错** |
 
 #### 3.2.9 测试要点（§10 展开）
 
-fixture 必须含**对抗样本**：改名文件（.jpg→.pdf）、加密 PDF、损坏 PDF、空 docx、修订稿 docx、纯扫描 PDF、混合 PDF、旋转/糊图、手写批注图。每个 fixture 断言 `detected_format / primary_type / suggested_parser / routing_recommendation`。
+fixture 必须含**对抗样本**：改名文件（.jpg→.pdf）、加密 PDF、损坏 PDF、空 docx、修订稿 docx、纯扫描 PDF、混合 PDF、旋转/糊图、手写批注图。每个 fixture 断言 `detected_format / primary_type / overall_confidence`；"选 parser / proceed-reject" 的断言归到 Routing 测试（§3.3）。
 
 ---
 
-### 3.3 Module ② Routing（选 parser）
+### 3.3 Module ② Routing（决策层）
 
-极薄。读决策表，实例化对应 parser，不含判断逻辑（判断都在 Module ①）。
+> 与 Format Detection 同等深度的核心章节。**Routing 不是查表**，是 Ingestion 的决策大脑。
+> 本节每个数据结构都按 **用途 → 字段表（带例子）→ 精简代码** 的顺序讲，确保非作者也读得懂。
+
+#### 3.3.1 定位：sense → decide → act
+
+Ingestion 里三件事是不同职责，分开才清楚、可测、可审计：
+
+| 职责 | 模块 | 干什么 | 性质 |
+|------|------|--------|------|
+| Sense 感知 | ① Format Detection | 文件是什么、什么形态、多确定 | 纯描述 |
+| **Decide 决策** | ② **Routing** | 用哪个 parser、逐页怎么排、能否进入、质量够不够 | 纯策略（无 I/O） |
+| Act 执行 | ③ Parsing | 按计划抽文本 | 纯 I/O |
+
+还要分清**两个不同时机的 Router**（别合并）：
+
+| | Router A = Ingestion Routing（本节） | Router B = Detection Router（Stage 2, §4） |
+|--|--|--|
+| 输入 | 原始文件 + 廉价分析 | 已解析的干净条款 |
+| 决策 | 选 parser、能否进入、质量 | 选类目/detector、检索哪条法条、风险分级 |
+
+"风险等级、检索需求"属于 Router B，**不在这里**——否则要在脏文本上重造 detector，把两层耦死。
+
+#### 3.3.2 组件：分析器 → 规划器
+
+```
+        sense（分析）                 decide（规划）
+  ┌─ PhysicalAnalyzer ＝ ① 复用 ─┐
+  ├─ QualityAssessor ───────────┤
+  └─ ContentGate ───────────────┴─▶ StrategyPlanner ─┬─▶ ProcessingPlan（给 ③）
+                                                      └─▶ RoutingDecision（给审计）
+```
+- **PhysicalAnalyzer** = Format Detection（①），直接复用，不重造。
+- **QualityAssessor** = 给文本可信度打分（§3.3.4）。
+- **ContentGate** = 判"是不是劳动合同 + 什么语言"（§3.3.4）。
+- **StrategyPlanner** = 把以上揉成一个 `ProcessingPlan`（§3.3.6），同时吐一条 `RoutingDecision` 留痕（§3.3.8）。
+
+Routing 是纯函数：`route(detection, capability, thresholds, options) -> ProcessingPlan`。下面分输入 / 内部分析 / 输出三组讲。
+
+#### 3.3.3 输入契约（来自部署 / 配置 / 用户）
+
+**(a) CapabilityProfile —— "这台部署能用哪些工具、能用多狠"**
+
+用途：让**同一套代码**在云端 / 律所内网自动适配，不改代码只换 profile。
+
+| 字段 | 含义（举例） |
+|------|-------------|
+| `profile_id` | 这套配置的名字。`cloud_full`（云端全能力）/ `onprem_lawfirm`（律所内网，断外网） |
+| `available_parsers` | 本机**实际可用**的 parser 集合。内网没 `qwen-vl` → 同一张糊照片：云端走 VLM，内网只能 OCR + 标低质 |
+| `max_pages` | 处理页数上限。200 页扫描件在 3.6G 内存上会撑爆 → 设 50，超出只处理前 N 页 + 警告 |
+| `max_concurrent_ocr` | 同时并行 OCR 的页数。每个 OCR 实例吃内存，3.6G 上开太多会 OOM → 信号量限到如 2 |
 
 ```python
-PARSER_REGISTRY = {
-    "python-docx":         DocxParser,
-    "pypdf":               PdfTextParser,
-    "paddleocr":           OcrParser,
-    "pdf_per_page_hybrid": PdfHybridParser,
-    "qwen-vl":             VlmParser,
-    "text_reader":         TextParser,
-}
-
-def route_to_parser(fmt: FormatDetectionResult) -> Parser:
-    if fmt.routing_recommendation == "reject":
-        raise UnprocessableDocument(fmt.identity.issues or [fmt.primary_type])
-    return PARSER_REGISTRY[fmt.suggested_parser](fmt)   # 把 shape 信息注入 parser（如逐页信号）
+@dataclass
+class CapabilityProfile:
+    profile_id: str
+    available_parsers: set[str]      # ⊆ {"python-docx","pypdf","paddleocr","qwen-vl","text_reader"}
+    max_pages: int
+    max_concurrent_ocr: int
 ```
+
+**(b) RoutingThresholds —— "所有判定数字集中放这，能调，不写死"**
+
+用途：把"放行还是拒、要不要兜底"的阈值从代码抽出来进配置，便于按 eval 数据校准（§3.3.5）。
+
+置信度分档（用 ① 的 `overall_confidence`）：
+```
+   reject        manual_review        proceed+警告         proceed
+ ──────────┼──────────────────┼──────────────────┼──────────▶
+ 0        0.30              0.60              0.90        1.0
+```
+| 字段（默认值） | 含义 |
+|--------------|------|
+| `proceed_min_conf = 0.90` | ≥ 此值：直接放行 |
+| `manual_min_conf = 0.60` | 落 [0.60, 0.90)：放行但加一条警告 |
+| `reject_min_conf = 0.30` | 落 [0.30, 0.60)：转人工复核；< 0.30：拒 |
+| `quality_detect_min = 0.50` | 文本质量低于此：连检测都不靠谱 |
+| `quality_rag_min = 0.80` | 低于此：够"看大概做检测"，但不够"逐字引证 + 检索法条" |
+| `ocr_fallback_conf = 0.85` | 某页 OCR 自报置信低于此 → 升级调 VLM 兜底 |
+| `contract_gate_min = 0.60` | 判"是劳动合同"的置信下限 |
+
+```python
+@dataclass
+class RoutingThresholds:
+    proceed_min_conf: float = 0.90
+    manual_min_conf:  float = 0.60
+    reject_min_conf:  float = 0.30
+    quality_detect_min: float = 0.50
+    quality_rag_min:    float = 0.80
+    ocr_fallback_conf:  float = 0.85
+    contract_gate_min:  float = 0.60
+```
+
+**(c) ReviewOptions（用户侧，§1.3）补三项**：`password`（解密）/ `force_ocr` / `skip_vlm`（省钱）。
+**(d) FormatDetectionResult**：① 的输出，主要读 `identity / shape / overall_confidence` 与 `pdf_shape.signals.per_page_chars`。
+
+#### 3.3.4 内部分析产物
+
+**ContentGateResult —— "是不是劳动合同 + 什么语言"**
+
+用途：把非劳动合同（简历/发票/租房合同）和非中文文件挡在门外，省下后续解析与检测。
+
+| 字段 | 含义（举例） |
+|------|-------------|
+| `verdict` | `yes` / `borderline` / `no`——是不是劳动合同 |
+| `doc_type_guess` | 猜的类型：`labor_contract` / `resume` / `other_contract` / `unknown` |
+| `gate_confidence` | 判定置信（与 `contract_gate_min` 比） |
+| `method` | 判定手段：`keyword` / `classifier` / `llm`（先用便宜的，LLM 兜底） |
+| `language` | 语言信息（见下） |
+
+```python
+@dataclass
+class LanguageInfo:
+    primary: str            # "zh" / "en" / ...
+    is_bilingual: bool      # 中英对照？
+    secondary: str | None
+    in_scope: bool          # primary == "zh"
+
+@dataclass
+class ContentGateResult:
+    verdict: Literal["yes", "borderline", "no"]
+    doc_type_guess: str
+    gate_confidence: float
+    method: Literal["keyword", "classifier", "llm"]
+    language: LanguageInfo
+```
+处置：`verdict=no` 且非中文 → reject（友好提示）；`borderline` → 警告 + 尽力；双语 → flag，用中文部分（中国法下通常中文版为准），MVP 先尽力不重投入。
+
+**QualityAssessment —— "这份文字有多可信，能走到哪一步"**
+
+用途：OCR 出的文字可能 90% 准——够检测违法点，却不够逐字引用当证据。用两条阈值线区分能走多远。
+
+| 字段 | 含义（举例） |
+|------|-------------|
+| `doc_quality` | 0–1 综合分。0.95=很干净，0.4=很烂。由 OCR 置信、模糊度、分辨率、文字覆盖率揉成 |
+| `detection_safe` | `doc_quality ≥ quality_detect_min`？——够不够做检测 |
+| `rag_safe` | `doc_quality ≥ quality_rag_min`（更高）？——够不够检索法条 + 逐字引证 |
+| `basis` | 这分**何时/靠什么**算的：`shape_signals`=路由时靠①信号**预估**（猜）；`post_parse`=解析后靠真实 OCR 置信**实测**（量） |
+| `per_page_quality` | 逐页分。10 页里第 7 页糊 → 只对第 7 页提示/送 VLM |
+| `reasons` | 人能看懂的原因（"第 7 页模糊度过低"、"旋转 12°"），喂警告与审计 |
+
+```python
+@dataclass
+class QualityAssessment:
+    doc_quality: float
+    detection_safe: bool
+    rag_safe: bool
+    basis: Literal["shape_signals", "post_parse"]
+    per_page_quality: dict[int, float] | None
+    reasons: list[str]
+```
+**为什么两条线**：检测"试用期 6 个月违法"只要数字大致对；但把这条**原文逐字引出来当证据**、并精确检索到对应法条，需要更高保真。中间地带（0.50–0.80）→ 按规则检测，但把 LLM/RAG 结论标低置信。
+
+#### 3.3.5 这些分数从哪来（计算机制）
+
+所有置信/质量分来自**三种机制**，别混：
+
+- **机制 A：规则一致性（自己算，确定性）**——`identity.confidence`、`shape.confidence`。从 1.0 起步，信号打架就乘惩罚因子（扩展名与 magic 矛盾 ×0.75…）；形态越"干脆"分越高（覆盖≥0.9 → 0.95）。可复现、无模型。
+- **机制 B：工具/模型自报**——OCR 每行返回置信；数字文本（docx/pypdf）无识别不确定性 → 质量≈1.0；ContentGate 的 keyword=命中锚词比例、classifier=概率、llm=自报。
+- **机制 C：派生/组合**——`overall_confidence = identity × shape`（乘法：两个独立不确定来源，任一弱则整体弱）；`doc_quality` 按来源聚合；`detection_safe / rag_safe` 是分数与阈值比大小的布尔。
+
+**诚实的难点**：VLM/LLM 自报置信**校准差**（说 0.9 不代表真 90% 准）→ 不盲信，靠交叉校验/保守先验，且优先用 keyword/小模型、LLM 仅兜底。
+
+**关键观念**：上面的常数（0.85、0.90、权重）**不是拍脑袋，是初始猜测 → 用 eval 数据校准**（路由准确度、CER，多模态 eval set，ADR-0008）。结构讲道理（A/B/C），数字靠数据调，所以全进 `RoutingThresholds` 配置。
+
+#### 3.3.6 输出契约（ProcessingPlan）—— 草案，待 ③ 核对
+
+> ⚠️ 本节输出契约是**草案**：待设计 ③ Parsing 时，从"③ 到底要吃什么"反向核对锁定（供需两侧夹出来）。
+
+**FallbackTrigger —— "什么条件触发兜底"**
+
+| 字段 | 含义 |
+|------|------|
+| `metric` | 触发指标，当前 `parser_confidence`（可扩展加别的） |
+| `threshold` | 低于即触发，如 0.85 |
+
+**ParseStep —— "一段范围 → 用哪个 parser"**
+
+用途：把"整篇/某些页 用哪个 parser、不行怎么兜底"写成明文一条。
+
+| 字段 | 含义（举例） |
+|------|-------------|
+| `scope` | `document`（整篇）/ `pages`（指定页） |
+| `pages` | `scope=pages` 时给页号，如 `[4,5]` |
+| `primary_parser` | 5 个原子 parser 之一 |
+| `fallback_chain` | 不行时依次尝试，如 `["qwen-vl"]`；空=无兜底 |
+| `fallback_trigger` | 触发条件（见上）；无则 None |
+| `reason` | 为何这么排（审计可读："第4-5页无文字层"） |
+
+**ProcessingPlan —— Routing 的主输出（= 你说的"策略"）**
+
+| 字段 | 含义 |
+|------|------|
+| `action` | `proceed` / `manual_review` / `reject` |
+| `reject_reason` | 拒的原因（加密/损坏/非合同/质量过低），其余为 None |
+| `source_format` | 透传自 ① |
+| `steps` | `ParseStep` 列表；reject 时为空；混合 PDF = 多 step |
+| `quality` | `QualityAssessment`，透传给下游 |
+| `content` | `ContentGateResult`，透传给下游 |
+| `warnings` | 警告列表 |
+| `decision` | `RoutingDecision`，审计（始终产出，含 reject 时） |
+
+```python
+@dataclass
+class FallbackTrigger:
+    metric: Literal["parser_confidence"]
+    threshold: float
+
+@dataclass
+class ParseStep:
+    scope: Literal["document", "pages"]
+    pages: list[int] | None
+    primary_parser: str
+    fallback_chain: list[str]
+    fallback_trigger: FallbackTrigger | None
+    reason: str
+
+@dataclass
+class ProcessingPlan:
+    action: Literal["proceed", "manual_review", "reject"]
+    reject_reason: str | None
+    source_format: SourceFormat
+    steps: list[ParseStep]
+    quality: QualityAssessment
+    content: ContentGateResult
+    warnings: list[str]
+    decision: "RoutingDecision"
+```
+
+**完整例子：5 页混合 PDF**。第 1–3 页有文字层、第 4–5 页是扫描签字页。① 给出 `signals.per_page_chars=[1200,1500,1300,8,0]`，Routing 排出：
+
+| ParseStep | scope/pages | primary_parser | fallback | trigger |
+|-----------|-------------|----------------|----------|---------|
+| step 1 | pages [1,2,3] | pypdf | — | — |
+| step 2 | pages [4,5] | paddleocr | [qwen-vl] | conf<0.85 |
+
+→ `action=proceed`，③ 执行：pypdf 抽 1–3、OCR 抽 4–5（不行升 VLM），按页码拼回。
+
+**设计副产品（验证拆分是对的）**：旧设计里那个"万能 parser" `pdf_per_page_hybrid` **消失了**——逐页不同策略现在是"一个含多个 `ParseStep` 的 plan"，决策从"藏在 parser 里"上移成"工单上的明文"（可见、可测、可审计）。`PARSER_REGISTRY` 收敛为 **5 个原子 parser**：`python-docx / pypdf / paddleocr / qwen-vl / text_reader`，组合的复杂度在 plan 层。
+
+#### 3.3.7 可扩展性
+
+三个注册表 + 一个稳定契约：
+- `ParserRegistry`：加一个新 parser（如更好的 OCR）→ 注册即用，不动 Routing 逻辑；
+- `AnalyzerPipeline`：加一个分析器（如版面分析）→ 插入即用；
+- `CapabilityProfile`：每个部署一套能力，新环境只配 profile；
+- `ProcessingPlan` 作稳定契约，把"决策"与"执行"解耦；`StrategyPlanner` 是纯函数，加规则不动执行层。
+
+#### 3.3.8 两层审计（原则见 §9.1）
+
+Routing 是纯函数，审计 = 把它**已算出的**决策痕迹返回，几乎零成本。
+
+- **运维审计 `RoutingDecision`**：为什么这么路由，便于调试 / 调参 / 向用户解释。
+
+| 字段 | 含义 |
+|------|------|
+| `inputs` | 输入快照：format **及其原始信号**（per_page_chars 等）/ quality / language / content / profile_id / 生效阈值 |
+| `chosen_action` | 选了 proceed / manual / reject |
+| `chosen_steps` | 每 step 的 parser 摘要 |
+| `alternatives` | 候选及淘汰原因，如 `("qwen-vl","本部署无 VLM")` |
+| `overall_confidence` | 综合置信 |
+| `timing_ms` / `timestamp` | 计时 / 时间戳 |
+
+```python
+@dataclass
+class RoutingDecision:
+    inputs: dict
+    chosen_action: str
+    chosen_steps: list[str]
+    alternatives: list[tuple[str, str]]
+    overall_confidence: float
+    timing_ms: float
+    timestamp: str
+```
+> `inputs` **必须带 ① 的原始信号**，否则 ① 误判（如把文字版误判扫描版）时，无法定位是感知错还是路由错。
+
+- **合规审计**：不在 Routing 内，而在**入料边界**记一笔（收到/拒绝文档：哈希/格式/时间，PIPL 来源凭证）。见 §9.1。
 
 ### 3.4 Module ③ Parsing（统一 Parser 接口）
 
@@ -612,10 +841,11 @@ class Parser(Protocol):
 |--------|----|----|
 | `DocxParser` | python-docx | 段落 + 表格（表格按行展开成文本，保留单元格边界）；读修订时取最终态 |
 | `PdfTextParser` | pypdf | 逐页 extract_text；记录页码用于 Clause.page |
-| `OcrParser` | PaddleOCR | 中文模型；返回 bbox + 行置信度；**整体置信 < 0.85 → 抛 `LowConfidenceOCR` 触发 VLM 兜底** |
-| `PdfHybridParser` | pypdf + PaddleOCR | 逐页：有文字层 pypdf，无则 OCR；按页拼接 |
+| `OcrParser` | PaddleOCR | 中文模型；返回 bbox + 行置信度；置信 < 阈值时由 `execute_plan` 触发该 step 的 `fallback_chain`（VLM） |
 | `VlmParser` | Qwen-VL（经 LLMClient） | 提示词要求"逐字转写 + 保留段落结构，不要改写"；脱敏不适用（图像内 PII 由后续文本脱敏处理） |
 | `TextParser` | 内置 | 按 §3.2.4 探测的 encoding 解码 |
+
+> 没有"混合 parser"：逐页不同策略由 Routing 的 `ProcessingPlan`（多个 `ParseStep`）表达，`execute_plan` 逐 step 调上面的原子 parser 并按页码拼回（§3.3.6）。
 
 ### 3.5 Module ④ Normalization（清洗归一）
 
@@ -686,9 +916,11 @@ def extract_metadata(text: str, clauses: list[Clause]) -> DocumentMetadata:
 ```python
 def ingest(source, document_id) -> IngestResult:
     raw, path, mime = load_bytes(source)
-    fmt = detect_format(path, raw, mime)                 # ①
-    parser = route_to_parser(fmt)                        # ②
-    raw_parse = parser.parse(raw)                        # ③（含 OCR→VLM 运行时降级）
+    fmt = detect_format(path, raw, mime)                 # ① 感知（纯描述）
+    plan = route(fmt, capability, thresholds, options)   # ② 决策 → ProcessingPlan（§3.3）
+    if plan.action == "reject":
+        raise UnprocessableDocument(plan.reject_reason)
+    raw_parse = execute_plan(plan, raw)                  # ③ 执行计划（逐 ParseStep + 兜底）
     clean = normalize(raw_parse.text)                    # ④
     clauses = segment(clean, raw_parse.blocks)           # ⑤
     metadata = extract_metadata(clean, clauses)          # ⑥
@@ -696,9 +928,10 @@ def ingest(source, document_id) -> IngestResult:
         document_id=document_id, source_path=path,
         source_format=fmt.identity.detected_format, metadata=metadata, clauses=clauses,
         warnings=collect_warnings(fmt, raw_parse),
-        quality_score=fmt.overall_confidence * raw_parse.parse_confidence,
+        quality_score=plan.quality.doc_quality,
         used_ocr=raw_parse.used_ocr, used_vlm=raw_parse.used_vlm,
         total_pages=raw_parse.total_pages, timing_ms=...,
+        content_gate=plan.content, routing_decision=plan.decision,
     )
 ```
 
@@ -900,13 +1133,42 @@ def run_review(source, options: ReviewOptions = DEFAULT) -> ReviewReport:
 | **保密**（ADR-0007） | redact 前置；PII 不出本地；audit log；本地 LLM 可选 |
 | **确定性** | 阶段间 dataclass 契约稳定；LLM 固定低温度；结构稳定即便文字微变 |
 
+### 9.1 审计挂载原则（哪些模块需要审计）
+
+不是每个模块都要审计。**审计挂在三种东西上**，三样都不沾的模块不需要单独审计：
+
+1. **做决策的**——选了 A 没选 B，要留"为什么"。
+2. **跨边界 / 有外部副作用的**——数据出本机（送 LLM / 调外部 API）、文件落盘、对外可见动作。
+3. **不可复现的**——同样输入下次结果可能不同（LLM 调用是典型）。
+
+> 一条经验：**越可复现的步骤，单独审计价值越低**（拿原输入重跑即可）。纯感知 + 确定性的模块（如 Format Detection）输出已被其消费者的审计捕获，无需自建审计。
+
+两类审计，用途不同别混：**运维审计**（决策痕迹，调试/调参/解释，如 `RoutingDecision`）｜**合规审计**（PIPL：什么数据送了哪、是否脱敏、谁何时访问，ADR-0007，出纠纷时即证据）。
+
+各模块 / 边界审计需求（未讨论的先占位 🚧）：
+
+| 模块 / 边界 | 要审计？ | 类型 | 状态 |
+|------------|---------|------|------|
+| 入料边界（收到/拒绝文档） | ✅ | 合规(来源凭证)+安全 | 🚧 待细化 |
+| ① Format Detection | ❌ | — | 已定：纯感知/可复现，输出已被 RoutingDecision 捕获 |
+| ② Routing | ✅ | 运维(`RoutingDecision`) | 已定（§3.3.8） |
+| ③ Parsing | ⚠️ 部分 | 运维(OCR/VLM 置信、兜底触发) | 🚧 占位 |
+| ④ Normalization | ❌ | — | 🚧 占位（确定性，价值低） |
+| ⑤ Segmentation | ⚠️ 可选 | 运维(切分异常) | 🚧 占位 |
+| ⑥ Metadata | ⚠️ 若用 LLM | 运维 + 合规(LLM 调用) | 🚧 占位 |
+| Stage 2 Router B（Detection） | 🚧 | — | 🚧 占位（未讨论） |
+| Stage 3 Detectors | ✅ | 运维 + 合规(LLM 调用) | 🚧 占位（LLM 调用必审） |
+| Stage 4 Verifier | 🚧 | — | 🚧 占位 |
+| Stage 5 Aggregator | 🚧 | — | 🚧 占位 |
+| LLMClient（贯穿各阶段） | ✅ | 运维 + 合规(token/cost/脱敏) | 已定（ADR-0007/§9） |
+
 ---
 
 ## 10. 测试策略
 
 | 层 | 方法 | 通过线 |
 |----|------|--------|
-| Format Detection | fixture（含对抗样本，§3.2.9）单测 | 每 fixture 断言 4 字段正确 |
+| Format Detection | fixture（含对抗样本，§3.2.9）单测 | 断言 detected_format/primary_type/置信；路由断言见 Routing |
 | 各 Parser | golden file（已知输入→已知文本） | 文本/页码/bbox 匹配 |
 | Normalization | 用例对（脏→净） | 不吃条款编号、不破坏中文标点 |
 | Segmentation | 已知合同→预期条款数/层级 | 条款数 ±0，层级正确 |
