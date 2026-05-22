@@ -248,32 +248,76 @@ class ReviewReport:
 
 #### 3.2.2 数据结构全集
 
+下面每个结构按 **用途 → 字段表（带例子）→ 精简代码** 讲（与 §3.3 同风格）。① 的所有产物都是**纯描述**，不含决策。
+
+**IdentityDetection —— Step 1 产物："你到底是什么文件"**
+
+用途：靠四个信号仲裁出文件真身（别信扩展名），并判断是否安全到值得处理。
+
+| 字段 | 含义（举例） |
+|------|-------------|
+| `claimed_extension` | 文件名后缀（易伪造）。`.pdf` |
+| `claimed_mime` | 上传 Content-Type / `python-magic` 给的 MIME。`application/pdf` |
+| `detected_format` | **仲裁后的真身**（`SourceFormat` 枚举）。改名的图片 → `IMAGE` 而非 `PDF` |
+| `confidence` | 四信号一致度（机制 A，§3.3.5）。全一致≈1.0，打架则降 |
+| `safe_to_process` | False = 直接拒（可执行文件伪装、未知二进制） |
+| `issues` | 冲突/异常留痕。`["扩展名 .docx 与 magic(PDF) 冲突"]` |
+
 ```python
 @dataclass
 class IdentityDetection:
-    """Step 1 产物：你到底是什么文件。"""
-    claimed_extension: str               # ".pdf"（来自文件名）
-    claimed_mime: str                    # "application/pdf"（上传 Content-Type / python-magic）
-    detected_format: SourceFormat        # 仲裁后的真身
-    confidence: float                    # 四信号一致度
-    safe_to_process: bool                # False = 直接拒（可执行文件伪装、未知二进制…）
-    issues: list[str] = field(default_factory=list)  # ["扩展名 .docx 与 magic bytes(PDF) 冲突"]
+    claimed_extension: str
+    claimed_mime: str
+    detected_format: SourceFormat
+    confidence: float
+    safe_to_process: bool
+    issues: list[str] = field(default_factory=list)
+```
 
+**四个 ShapeDetection —— Step 2 产物："你内部长什么样"**
+
+每种格式一个 shape，只在 Identity 通过后填一个。**只描述形态，不选 parser**（选 parser 是 Routing 的事）。
+
+**① PDFShapeDetection（最复杂）** —— 回答"文字版/扫描/混合/加密/损坏"：
+
+| 字段 | 含义（举例） |
+|------|-------------|
+| `primary_type` | `text` / `scanned` / `mixed` / `encrypted` / `corrupted` |
+| `confidence` | 形态判定有多干脆（覆盖≥0.9 → 0.95） |
+| `page_count` | 总页数 |
+| `text_char_count` / `text_chars_per_page` | 可抽字符总数 / 每页均值 |
+| `text_coverage` | 有文字层的页数 ÷ 总页数（判 text vs scanned 的关键） |
+| `image_count` | 图像数 |
+| `has_signature` | 检出签名页图像 / `/Sig` 域 |
+| `has_form_fields` | 是否含 `/AcroForm` 表单域 |
+| `signals` | **原始信号**，必含 `per_page_chars: list[int]` —— Routing 据此排逐页 `ParseStep`（§3.3），勿删 |
+
+```python
 @dataclass
 class PDFShapeDetection:
-    """Step 2 产物（PDF 专用）：PDF 内部长啥样。"""
     primary_type: Literal["text", "scanned", "mixed", "encrypted", "corrupted"]
     confidence: float
     page_count: int
-    text_char_count: int                 # 全文档可抽字符总数
+    text_char_count: int
     text_chars_per_page: float
-    text_coverage: float                 # 有文字层的页数 / 总页数
+    text_coverage: float
     image_count: int
-    has_signature: bool                  # 检出签名页图像 / /Sig 域
-    has_form_fields: bool                # /AcroForm
-    signals: dict = field(default_factory=dict)
-    # signals 必含 per_page_chars: list[int] —— Routing 据此排逐页 ParseStep（§3.3），勿删
+    has_signature: bool
+    has_form_fields: bool
+    signals: dict = field(default_factory=dict)   # 必含 per_page_chars
+```
 
+**② DocxShapeDetection** —— docx 是结构化的，重点是"正常文本 / 表格型 / 空 / 带修订"：
+
+| 字段 | 含义 |
+|------|------|
+| `primary_type` | `text` / `table_heavy` / `empty` / `tracked_changes` |
+| `confidence` | 形态置信 |
+| `paragraph_count` / `table_count` / `image_count` | 段落 / 表格 / 图片数 |
+| `has_tracked_changes` | 修订痕迹（双方谈判稿，解析时取最终态） |
+| `char_count` | 总字数 |
+
+```python
 @dataclass
 class DocxShapeDetection:
     primary_type: Literal["text", "table_heavy", "empty", "tracked_changes"]
@@ -281,32 +325,68 @@ class DocxShapeDetection:
     paragraph_count: int
     table_count: int
     image_count: int
-    has_tracked_changes: bool            # 修订痕迹（双方谈判稿）
+    has_tracked_changes: bool
     char_count: int
+```
 
+**③ ImageShapeDetection** —— 图片重点是"清晰 / 低质量 / 疑似手写"，决定后续走 OCR 还是 VLM：
+
+| 字段 | 含义 |
+|------|------|
+| `primary_type` | `clear_text` / `low_quality` / `handwritten_suspected` |
+| `confidence` | 形态置信 |
+| `width` / `height` | 像素尺寸 |
+| `blur_score` | Laplacian 方差，越低越糊 |
+| `estimated_rotation` | 估计旋转角（度） |
+| `has_text_regions` | 轻量文本检测：图里有没有文字区 |
+
+```python
 @dataclass
 class ImageShapeDetection:
     primary_type: Literal["clear_text", "low_quality", "handwritten_suspected"]
     confidence: float
     width: int
     height: int
-    blur_score: float                    # Laplacian 方差，越低越糊
-    estimated_rotation: float            # 度
-    has_text_regions: bool               # 轻量文本检测
+    blur_score: float
+    estimated_rotation: float
+    has_text_regions: bool
+```
 
+**④ TextShapeDetection** —— 纯文本/markdown，最简单：
+
+| 字段 | 含义 |
+|------|------|
+| `primary_type` | `plain` / `markdown` |
+| `confidence` | 形态置信 |
+| `encoding` | 探测到的编码。`utf-8` / `gb18030` |
+| `char_count` | 字数 |
+| `has_article_markers` | 是否含"第X条"（给 Segmentation 的提示信号） |
+
+```python
 @dataclass
 class TextShapeDetection:
     primary_type: Literal["plain", "markdown"]
     confidence: float
-    encoding: str                        # "utf-8" / "gb18030" …
+    encoding: str
     char_count: int
-    has_article_markers: bool            # 含"第X条"
+    has_article_markers: bool
+```
 
+**FormatDetectionResult —— Module ① 总产物（分层 Facade）**
+
+用途：把 identity（必有）+ 四选一的 shape 包成一个对象；上层 90% 只用便捷属性，要细节再下钻。**纯描述，不做决策。**
+
+| 成员 | 含义 |
+|------|------|
+| `identity` | `IdentityDetection`，永远有 |
+| `pdf_shape` / `docx_shape` / `image_shape` / `text_shape` | 四选一，按 `detected_format` 填一个 |
+| `.shape`（属性） | 返回被填充的那个 shape，统一访问点 |
+| `.primary_type`（属性） | shape 的 primary_type，无 shape 则 `unknown` |
+| `.overall_confidence`（属性） | `identity.confidence × shape.confidence`，纯指标（机制 C） |
+
+```python
 @dataclass
 class FormatDetectionResult:
-    """Module ① 总产物 —— 分层 Facade（Option C）。纯描述：只回答"是什么/长什么样/多确定"，
-    不做"选 parser / proceed-reject"等决策（在 Routing §3.3）。
-    identity 必有；shape 四选一（按 detected_format 填一个）。"""
     identity: IdentityDetection
     pdf_shape:   Optional[PDFShapeDetection]   = None
     docx_shape:  Optional[DocxShapeDetection]  = None
@@ -315,7 +395,6 @@ class FormatDetectionResult:
 
     @property
     def shape(self):
-        """返回被填充的那个 shape（统一访问点）。"""
         return self.pdf_shape or self.docx_shape or self.image_shape or self.text_shape
 
     @property
@@ -323,13 +402,10 @@ class FormatDetectionResult:
         return self.shape.primary_type if self.shape else "unknown"
 
     @property
-    def overall_confidence(self) -> float:
-        """身份置信 × 形态置信（纯指标/事实，非决策）。任一不确定都拉低整体。"""
-        shape_conf = self.shape.confidence if self.shape else 0.0
-        return self.identity.confidence * shape_conf
+    def overall_confidence(self) -> float:        # identity.conf × shape.conf（纯指标，非决策）
+        return self.identity.confidence * (self.shape.confidence if self.shape else 0.0)
 
-    # ❌ 已删除 suggested_parser / routing_recommendation —— 选 parser 与 proceed/reject 都是
-    #    【决策】，已移交 Routing（§3.3）；① 只交付描述（含 signals.per_page_chars）。
+    # ❌ 不含 suggested_parser / routing_recommendation —— 选 parser、proceed/reject 是【决策】，在 Routing（§3.3）
 ```
 
 > **为什么选 Option C（分层 Facade）而不是扁平大 dataclass / 继承多态**：

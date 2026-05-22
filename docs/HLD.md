@@ -152,8 +152,9 @@ flowchart LR
 
 | 模块 | 输入 | 输出 | 实装时机 | 详细文档 |
 |------|------|------|---------|---------|
-| **Ingestion** | 文件路径（docx/pdf/image）| `List[Clause]` + metadata | P2 W4-W6 | INGESTION_DESIGN.md (待写) |
-| **Router** | Clause + taxonomy.yaml | 对应类目 detector | P2 W4 | (taxonomy.yaml 即定义) |
+| **Ingestion** | 文件路径（docx/pdf/image）| `IngestResult`（`List[Clause]` + metadata）| P2 W4-W6 | [SYSTEM1_PIPELINE.md](SYSTEM1_PIPELINE.md) §3（已写）|
+| **Router（类目分发 / Router B）** | Clause + taxonomy.yaml | 对应类目 detector | P2 W4 | (taxonomy.yaml 即定义) |
+| 注 | Ingestion 内部另有自己的 Routing（Router A：选 parser/质量/能否进入），见 SYSTEM1 §3.3 | | | |
 | **Detection × 10** | Clause + 上下文 | Prediction(violation, law, severity, ...) | P3 W7-W10 | DETECTION_DESIGN.md (待写) |
 | **RAG 检索** | query | top-K 法条/判例 | P3 W7+ | [ADR-0005 (RAG Strategy)](adr/ADR-0005-rag-strategy.md) |
 | **Verifier** | Prediction | 验证后的 Prediction + warning | P2 W5 | VERIFIER_DESIGN.md (待写) |
@@ -181,7 +182,7 @@ flowchart LR
 
 **明确不做的**：
 - ❌ **领域微调模型**：成本/复杂度高，RAG + prompt 已能达 P/R 目标
-- ❌ **小模型分类器**：Router 用 taxonomy.yaml + 规则即可
+- ❌ **小模型分类器（类目分发）**：Router B 用 taxonomy.yaml + 规则即可（Ingestion 判"是否劳动合同"的 ContentGate 也优先关键词，小分类器仅备选，见 SYSTEM1 §3.3.4）
 - ❌ **GPU 训练**：CPU only 部署，模型走 API 或本地 inference
 
 **关键设计选择**：所有模型调用走 `LLMClient` 抽象层（含 cost / retry / audit / mock）。切换 provider = 改配置。
@@ -338,7 +339,7 @@ flowchart LR
 | 建议层 | 建议元素 | 我们的对照 | 理由 |
 |--------|---------|-----------|------|
 | 模型层 | 领域微调模型 | ❌ 不做 | RAG + prompt 已能达 eval 目标；微调成本/数据/反馈环都重 |
-| 模型层 | 小模型分类器 | ❌ 不做 | Router 用规则 + taxonomy.yaml 配置足够 |
+| 模型层 | 小模型分类器 | ❌ 不做 | 类目分发用规则 + taxonomy.yaml 足够；合同类型 gate 优先关键词（SYSTEM1 §3.3.4） |
 | 模型层 | Reranker | ⏳ P3 W8 决策 | 需要先看 RAG baseline，再决定是否加 reranker |
 | 数据知识层 | 知识图谱 | ❌ 不做 | 法条结构化引用 + RAG 已能处理关联；图谱 ROI 低 |
 | 数据知识层 | 历史合同库 | ⚪ 部分（多模态合同样本算）| 暂无 multi-tenant 需求 |
@@ -365,7 +366,7 @@ flowchart LR
 
 ### L3 能力层
 - [docs/taxonomy.yaml](taxonomy.yaml) — 10 类目 source of truth
-- INGESTION_DESIGN.md (待写) — Ingestion 6 模块详细设计
+- [SYSTEM1_PIPELINE.md](SYSTEM1_PIPELINE.md) — Pipeline 全五阶段实现级设计（含 Ingestion 6 模块、Routing、审计原则）
 - DETECTION_DESIGN.md (待写) — 10 detector 实现规范
 - VERIFIER_DESIGN.md (待写) — 防幻觉机制
 - [ADR-0005 RAG Strategy](adr/ADR-0005-rag-strategy.md) (Draft, P3 W8 finalize)

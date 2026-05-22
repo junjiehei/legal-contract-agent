@@ -213,8 +213,8 @@ sequenceDiagram
 
 | 步骤 | 文件 | 状态 |
 |------|------|------|
-| Ingest | `src/ingest/parser.py` + `src/ingest/segmenter.py` | P2 W4 |
-| Router | `src/orchestration/router.py` | P2 W4 |
+| Ingest | `src/ingest/{format_detect,router,parser,segmenter}.py` | P2 W4 |
+| Router（类目分发） | `src/orchestration/router.py` | P2 W4 |
 | Detector (per category) | `src/detection/{category}.py` | P2 W5 + P3 |
 | Verifier | `src/verifier/citation.py` + `src/verifier/schema.py` | P2 W5 |
 | Aggregator | `src/orchestration/aggregator.py` | P2 W6 |
@@ -370,7 +370,7 @@ flowchart LR
     T1 --> Parser1[python-docx]
     T2 --> Parser2[pypdf]
     T3 --> OCR[OCR<br/>PaddleOCR<br/>P3]
-    T4 --> VLM[VLM<br/>Claude Vision / Qwen-VL<br/>P3-P4]
+    T4 --> VLM[VLM<br/>Qwen-VL<br/>P3-P4]
     T5 --> VLM
     
     Parser1 --> Norm[规范化条款文本]
@@ -496,7 +496,7 @@ A: `LLMClient` 抽象层一行配置切到 Qwen / Claude / GPT。见 ADR-0001。
 A: **不能**。这是研究/学习 grade 项目。生产部署需要：（a）法律免责声明 + 律师人工复核；（b）confidential 设计完整（ADR-0007）；（c）大规模 eval（律师参与标注）；（d）合规认证。详见 `docs/DISCLAIMER.md`。
 
 **Q: 为什么时间安排是 3.5 个月？**
-A: 项目开发周期与作者个人时间安排一致。3.5 个月对单人 + 可投入时间是合理的 ship-to-completion 区间。
+A: 项目开发周期与作者个人时间安排一致。3.5 个月对单人 + 业余时间是合理的 ship-to-completion 区间。
 
 **Q: 为什么 chat agent 放到最后做？**
 A: Pipeline 是核心价值（确定性 detection），稳定后通过 MCP 暴露能力，chat agent 才有可调用的"工具"。先 chat agent 后 pipeline 等于在沙上盖楼。
