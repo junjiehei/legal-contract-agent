@@ -105,6 +105,8 @@ flowchart TD
 
 **关键**：80% 输入走免费路径，仅 15% 触发 VLM 付费调用 → 单次成本可控。
 
+> **注（2026-05）**：文字版 PDF 的正式解析工具后续细化为 **pdfplumber**（MIT 许可，自带表格与坐标抽取）；pypdf 仅保留用于成本极低的格式/形态探测。详见 [SYSTEM1_PIPELINE.md](SYSTEM1_PIPELINE.md) §3.4。本 ADR 的路由策略与成本结论不变。
+
 ### Why this option
 
 - **覆盖率**：4 条路径覆盖所有真实形态
