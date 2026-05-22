@@ -368,7 +368,7 @@ flowchart LR
     Input --> T5[含手写批注]
     
     T1 --> Parser1[python-docx]
-    T2 --> Parser2[pypdf]
+    T2 --> Parser2[pdfplumber]
     T3 --> OCR[OCR<br/>PaddleOCR<br/>P3]
     T4 --> VLM[VLM<br/>Qwen-VL<br/>P3-P4]
     T5 --> VLM
