@@ -32,6 +32,21 @@
 |------|------|------|------|
 | Qdrant 向量库 | running (Docker) | 6333 (HTTP), 6334 (gRPC) | `/data/qdrant` |
 
+## 文档导航
+
+**从这里开始**：[docs/HLD.md](docs/HLD.md) — 总体架构（6 层 + 跨层关切 + 演进路线）
+
+| 文档 | 内容 |
+|------|------|
+| [docs/HLD.md](docs/HLD.md) | 总体架构设计（顶层视角）⭐ |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 详细组件交互 + 数据流 + 双系统 |
+| [docs/EVAL_GUIDE.md](docs/EVAL_GUIDE.md) | 评测体系（指标 / 阈值 / baseline） |
+| [docs/taxonomy.yaml](docs/taxonomy.yaml) | 10 风险类目 source of truth |
+| [docs/DISCLAIMER.md](docs/DISCLAIMER.md) | 免责声明 |
+| [docs/adr/](docs/adr/) | 架构决策记录（ADR-0001~0010） |
+| [data/INVENTORY.md](data/INVENTORY.md) | 数据资产清单 |
+| [eval/README.md](eval/README.md) | Eval 数据 schema |
+
 ## 技术栈
 
 | 层 | 选型 | 备注 |
