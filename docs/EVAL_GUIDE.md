@@ -1,5 +1,7 @@
 # Evaluation Guide — 法律合同 Agent
 
+> ⚠️ **本文档已被 [EVAL_QA.md](EVAL_QA.md) 取代**（标注规范 + 评测集 + 方法论合一，且更大白话）。本文件暂时保留、以后删除。
+>
 > **目的**：让你（开发者 / reviewer）能 5 分钟看懂这个项目的评测体系。
 > 配套：`src/eval/harness.py`（实现）、`scripts/run_eval.py`（CLI）、`eval/labeled/*.jsonl`（数据）、`docs/taxonomy.yaml`（每类目阈值）
 

@@ -407,10 +407,13 @@ flowchart LR
 - [data/INVENTORY.md](../data/INVENTORY.md)
 - [data/laws/MANIFEST.md](../data/laws/MANIFEST.md)
 - [eval/README.md](../eval/README.md)
-- [EVAL_GUIDE.md](EVAL_GUIDE.md) — 评测体系详解
+- [EVAL_QA.md](EVAL_QA.md) — 评测与质量保障（标注规范 + 评测集 + 方法论）
+- ~~[EVAL_GUIDE.md](EVAL_GUIDE.md)~~ — 旧评测文档，已被 EVAL_QA 取代，暂留待删
 
 ### L6 基础设施层
 - [ADR-0007 Confidentiality Architecture](adr/ADR-0007-confidentiality.md)
+- [SECURITY_COMPLIANCE.md](SECURITY_COMPLIANCE.md) — 安全合规（数据安全 + AI 合规 + 备案 + 责任划分）
+- [DEPLOYMENT_OPS.md](DEPLOYMENT_OPS.md) — 部署与运维（含私有化）
 - [DISCLAIMER.md](DISCLAIMER.md)
 - DEPLOYMENT_MODES.md (待写，P5b)
 
