@@ -122,17 +122,27 @@ class SourceFormat(str, Enum):
 # （更全：树 / 祖先路径 / 引用 / 来源块）。检测的主单元 = type=article 的节点。
 
 @dataclass
+class FieldProvenance:                    # 每个要素从哪来（可追溯，§3.7）
+    method: Literal["rule", "llm", "derived", "missing"]
+    source_node_id: str | None = None    # 抽自哪个 AST 节点
+
+@dataclass
 class DocumentMetadata:
     title: str = ""
     party_a_name: str = ""               # 甲方（用人单位）
-    party_b_name: str = ""               # 乙方（劳动者）—— PII，脱敏对象
+    party_b_name: str = ""               # 乙方（劳动者）—— PII，只规则抽、绝不送 LLM
     contract_type: str = ""              # 固定期限/无固定期限/以完成一定工作任务为期限
     signing_date: str = ""
     contract_start: str = ""
     contract_end: str = ""
     workplace: str = ""
     position: str = ""
+    # —— 派生字段（算出来的，喂检测）——
+    region: str = ""                              # 从 workplace 取省市 → 最低工资按地区检测
+    contract_duration_months: int | None = None  # 起止算时长 → 试用期上限检测
+    # —— 质量 / 可追溯 ——
     extraction_confidence: float = 0.0
+    provenance: dict[str, FieldProvenance] = field(default_factory=dict)
 
 @dataclass
 class IngestResult:
@@ -1223,29 +1233,71 @@ class LegalAST:
 
 判风险/类目（→ Detection）、抽元数据字段（→ ⑥，⑤ 只圈出 preamble 给它）、切检索块/生成检索对象（→ RAG）。**⑤ 只认结构。**
 
-### 3.7 Module ⑥ Metadata Extraction（抽要素）
+### 3.7 Module ⑥ Metadata Extraction（抽要素：填合同的"基本信息卡"）
 
-抽 `DocumentMetadata`。规则优先，LLM 兜底。
+**它干嘛**：从合同抽**文档级要素**（甲乙方/类型/期限/地点/岗位/日期）填进 `DocumentMetadata`，给报告头部用；期限、地区还会喂检测。**只抽描述性事实，不判违法。**
+
+**输入** `LegalAST`（⑤ 的树）→ **输出** `DocumentMetadata`。
+
+**例子**：
+```
+劳动合同书                                        ← 标题
+甲方（用人单位）：北京XX科技有限公司                ← 甲方
+乙方（劳动者）：张三                               ← 乙方（PII）
+第一条 本合同为固定期限合同，自2024年3月1日起至2026年2月28日止。  ← 类型 + 起止
+第二条 乙方担任「软件工程师」，工作地点为北京市海淀区。            ← 岗位 + 地点
+甲方（盖章）：__ 乙方（签字）：__ 签订日期：2024年2月20日           ← 签订日期
+```
+抽出：标题=劳动合同书｜甲方=北京XX科技｜乙方=张三｜类型=固定期限｜起=2024-03-01 止=2026-02-28｜岗位=软件工程师｜地点=北京市海淀区｜签订日期=2024-02-20。
+再**派生**：region=北京（喂最低工资检测）、contract_duration_months=24（喂试用期检测）。
+
+#### 字段来源表（去 AST 哪找）
+
+| 字段 | 在哪 | 怎么拿 |
+|------|------|--------|
+| title | 文档最前 | 取首个标题块 |
+| party_a / party_b | preamble（首部） | 正则 `甲方…：(...)` / `乙方…：(...)` |
+| contract_type | 首部或"期限条" | 关键词（固定期限/无固定期限/以完成一定工作任务） |
+| contract_start / end | "合同期限"条 | 正则日期区间"自…至…" |
+| workplace / position | "工作内容/地点"条 | 正则 + 兜底 LLM |
+| signing_date | signature（尾部）/首部 | 正则"签订日期…" |
+| region（派生） | 由 workplace 算 | 取省市 |
+| contract_duration（派生） | 由起止算 | end − start（缺则 None） |
+
+#### 方法：规则优先 + LLM 兜底
 
 ```python
 def extract_metadata(ast: "LegalAST") -> DocumentMetadata:
-    text = ast.preamble_text()           # 首部文本（甲乙方/期限/日期都在这，§3.6）
     md = DocumentMetadata()
-    # 1) 规则层：合同首部高度结构化，正则可拿大部分
-    md.party_a_name = first_match([r"甲方[（(]?[^）)]*[）)]?[:：]\s*(.+)", ...])
-    md.party_b_name = first_match([r"乙方.*?[:：]\s*(.+)", ...])
-    md.contract_type = match_contract_type(text)     # 固定期限/无固定期限/…
-    md.signing_date  = match_date_near(text, "签订")
-    # … workplace / position / start / end 同理
-    # 2) LLM 兜底：规则缺失字段 → 一次性 LLM 抽取（脱敏后），低频
-    missing = [f for f in REQUIRED_FIELDS if not getattr(md, f)]
+    pre = ast.preamble_text()                       # 首部：甲乙方/标题
+    # 1) 规则层（首部 + 定位到的条 + 尾部）
+    md.party_a_name = rule_party(pre, "甲方")        # PII 字段
+    md.party_b_name = rule_party(pre, "乙方")        # 只走规则、绝不送 LLM
+    md.contract_type, md.contract_start, md.contract_end = rule_period(ast)  # 期限条
+    md.workplace, md.position = rule_work(ast)       # 工作内容条
+    md.signing_date = rule_signing(ast)             # 尾部
+    # 2) LLM 兜底：仅【非 PII】缺失字段，且【脱敏后】才送
+    missing = [f for f in NON_PII_FIELDS if not getattr(md, f)]
     if missing:
-        md = llm_fill_metadata(text[:CTX], md, missing)   # 走 LLMClient
+        md = llm_fill(redact(ast), md, missing)     # 见下"PII 时序"
+    # 3) 派生
+    md.region = region_of(md.workplace)             # 省市
+    md.contract_duration_months = months_between(md.contract_start, md.contract_end)
+    # 4) 记 provenance + 置信
     md.extraction_confidence = score(md)
     return md
 ```
 
-- `party_b_name`（劳动者姓名）是 **PII**，进入脱敏对象集合（ADR-0007）：抽出来用于报告展示（本地），但**进 LLM 前替换为占位符**。
+#### PII 时序（关键）
+
+`party_b_name`（劳动者姓名）等 PII：**只用规则抽、绝不送 LLM**。⑥ 的 LLM 兜底只补**非 PII** 字段，且**送 LLM 前必先脱敏**。
+> ⚠️ 管线级脱敏在 §8 是"ingest 之后"，但 ⑥ 在 ingest 内部就调 LLM。所以规则收紧成：**任何 LLM 调用前都先脱敏（最好在 LLMClient 层强制）**，⑥ 兜底不例外。PII 永不进 LLM。
+
+#### 可追溯 + 缺字段 + 边界
+
+- **provenance**：每个字段记一条 `FieldProvenance`（method=rule/llm/derived/missing + 抽自哪个节点）。报告里"工作地点=北京"能说清从哪条、用什么方法拿的。
+- **缺字段不报错**：取不到留空 + 记 `missing`。"该写没写"（如未约定工作地点/期限）本身可能违法 → 交 **Detection** 判，⑥ 只如实记录有/无。
+- **边界**：⑥ 抽**文档级描述事实**，不抽条款级事实（"试用期6个月"是检测的活）、不判违法、不碰风险/检索。
 
 ### 3.8 Ingestion 汇总
 
