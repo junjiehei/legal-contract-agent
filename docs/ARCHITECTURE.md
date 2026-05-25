@@ -182,9 +182,9 @@ sequenceDiagram
     U->>UI: 上传 labor_contract.pdf
     UI->>Ing: 文件路径
     Ing->>Ing: PDF→text + 切分条款
-    Ing-->>Rt: List[Clause]
+    Ing-->>Rt: LegalAST
     
-    loop 对每个 Clause
+    loop 对每个条（LegalNode）
         Rt->>Rt: 判断 clause 属哪个 taxonomy 类目
         alt rule_assisted_llm (e.g. probation_period)
             Rt->>Det: clause + 类目
@@ -213,7 +213,7 @@ sequenceDiagram
 
 | 步骤 | 文件 | 状态 |
 |------|------|------|
-| Ingest | `src/ingest/{format_detect,router,parser,segmenter}.py` | P2 W4 |
+| Ingest | `src/ingest/{format_detect,router,parser,normalize,segmenter,metadata}.py` | P2 W4 |
 | Router（类目分发） | `src/orchestration/router.py` | P2 W4 |
 | Detector (per category) | `src/detection/{category}.py` | P2 W5 + P3 |
 | Verifier | `src/verifier/citation.py` + `src/verifier/schema.py` | P2 W5 |

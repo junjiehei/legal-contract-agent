@@ -129,6 +129,7 @@ class FieldProvenance:                    # 每个要素从哪来（可追溯，
 @dataclass
 class DocumentMetadata:
     title: str = ""
+    contract_number: str = ""            # 合同编号（若有）
     party_a_name: str = ""               # 甲方（用人单位）
     party_b_name: str = ""               # 乙方（劳动者）—— PII，只规则抽、绝不送 LLM
     contract_type: str = ""              # 固定期限/无固定期限/以完成一定工作任务为期限
@@ -1105,7 +1106,6 @@ def execute_plan(plan: ProcessingPlan, raw: bytes, ctx: ParseContext) -> RawPars
 | 字段 | 含义 |
 |------|------|
 | `blocks` | 洗净的块（`text`=洗后、`raw_text`=原文）；页眉页脚已删 |
-| `total_pages` | 一共几页 |
 | `dropped_blocks` | 被删块的 id（页眉/页脚/页码），审计可查 |
 | `warnings` | 清洗提示（如"第7页疑似乱码已标低置信"） |
 
@@ -1113,7 +1113,6 @@ def execute_plan(plan: ProcessingPlan, raw: bytes, ctx: ParseContext) -> RawPars
 @dataclass
 class NormalizedDoc:
     blocks: list[TextBlock]      # 洗净；页眉页脚已删
-    total_pages: int
     dropped_blocks: list[str]    # 被删块 id（审计）
     warnings: list[str] = field(default_factory=list)
 
@@ -1256,6 +1255,7 @@ class LegalAST:
 | 字段 | 在哪 | 怎么拿 |
 |------|------|--------|
 | title | 文档最前 | 取首个标题块 |
+| contract_number | 首部 | 正则"合同编号/编号：…"（无则空） |
 | party_a / party_b | preamble（首部） | 正则 `甲方…：(...)` / `乙方…：(...)` |
 | contract_type | 首部或"期限条" | 关键词（固定期限/无固定期限/以完成一定工作任务） |
 | contract_start / end | "合同期限"条 | 正则日期区间"自…至…" |
