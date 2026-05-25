@@ -46,8 +46,8 @@
 |---|------|---------|---------|
 | P1 | **Workflow over Agent** — 确定性任务用 pipeline，开放任务才用 agent loop | 双系统架构（System 1 pipeline + System 2 chat agent） | [ADR-0006](adr/ADR-0006-dual-system-architecture.md) |
 | P2 | **Strategy 分层路由** — 10 类目按复杂度分 5 档检测策略，简单类目用便宜模型 | taxonomy.yaml 中 `detection.strategy` 字段 | [taxonomy.yaml](taxonomy.yaml) |
-| P3 | **可解释性优先** — 每个违法判断必须有法条引用 + 原文位置 + 置信度，拒绝黑盒 | Clause / Prediction 数据结构强制字段 | [ADR-0007](adr/ADR-0007-confidentiality.md) |
-| P4 | **置信度感知 pipeline** — 从 ingestion 到 detection 全链路 confidence，不假装"全部对" | 每个 Clause / Prediction 都带 `confidence` | (跨多 ADR) |
+| P3 | **可解释性优先** — 每个违法判断必须有法条引用 + 原文位置 + 置信度，拒绝黑盒 | LegalNode / Prediction 数据结构强制字段 | [ADR-0007](adr/ADR-0007-confidentiality.md) |
+| P4 | **置信度感知 pipeline** — 从 ingestion 到 detection 全链路 confidence，不假装"全部对" | 每个 LegalNode / Prediction 都带 `confidence` | (跨多 ADR) |
 | P5 | **接口稳定 + 实现可换** — LLMClient / Parser / VectorStore 都做抽象层 | `src/llm/client.py` / `src/ingest/parsers/` / RAG retriever | [ADR-0001](adr/ADR-0001-llm-selection.md) / [ADR-0003](adr/ADR-0003-orchestration.md) |
 
 **用大白话**：① 能不让 AI 自由发挥就不让（流程可控）；② 简单的活用便宜模型、省钱；③ 每个结论都要能说出依据（不搞黑盒）；④ 不确定的地方如实标出来，不假装全对；⑤ 各种工具（模型 / 解析器 / 数据库）都能换，不被某一家绑死。
@@ -179,10 +179,10 @@ flowchart LR
 
 | 模块 | 输入 | 输出 | 实装时机 | 详细文档 |
 |------|------|------|---------|---------|
-| **Ingestion** | 文件路径（docx/pdf/image）| `IngestResult`（`List[Clause]` + metadata）| P2 W4-W6 | [SYSTEM1_PIPELINE.md](SYSTEM1_PIPELINE.md) §3（已写）|
-| **Router（类目分发 / Router B）** | Clause + taxonomy.yaml | 对应类目 detector | P2 W4 | (taxonomy.yaml 即定义) |
+| **Ingestion** | 文件路径（docx/pdf/image）| `IngestResult`（`Legal AST` + metadata）| P2 W4-W6 | [SYSTEM1_PIPELINE.md](SYSTEM1_PIPELINE.md) §3（已写）|
+| **Router（类目分发 / Router B）** | 条（LegalNode）+ taxonomy.yaml | 对应类目 detector | P2 W4 | (taxonomy.yaml 即定义) |
 | 注 | Ingestion 内部另有自己的 Routing（Router A：选 parser/质量/能否进入），见 SYSTEM1 §3.3 | | | |
-| **Detection × 10** | Clause + 上下文 | Prediction(violation, law, severity, ...) | P3 W7-W10 | DETECTION_DESIGN.md (待写) |
+| **Detection × 10** | 条（LegalNode）+ 上下文 | Prediction(violation, law, severity, ...) | P3 W7-W10 | DETECTION_DESIGN.md (待写) |
 | **RAG 检索** | query | top-K 法条/判例 | P3 W7+ | [ADR-0005 (RAG Strategy)](adr/ADR-0005-rag-strategy.md) |
 | **Verifier** | Prediction | 验证后的 Prediction + warning | P2 W5 | VERIFIER_DESIGN.md (待写) |
 | **Aggregator** | `List[Prediction]` | ReviewReport（排序、去重、Markdown）| P2 W6 | (代码即文档) |
@@ -300,7 +300,7 @@ flowchart TB
 |------|------------|---------|
 | **Confidentiality** | L1 鉴权 / L3 脱敏入口 / L4 不裸送 LLM / L5 per-tenant / L6 审计 | [ADR-0007](adr/ADR-0007-confidentiality.md) |
 | **Evaluation** | L3 eval harness / L4 跨模型 benchmark / L5 ground truth | [EVAL_GUIDE.md](EVAL_GUIDE.md) |
-| **Confidence** | L3 Clause/Prediction / L4 OCR/VLM/Reranker 输出 | (跨多 ADR) |
+| **Confidence** | L3 LegalNode/Prediction / L4 OCR/VLM/Reranker 输出 | (跨多 ADR) |
 | **Cost & Latency** | L2 路由策略 / L3 不必要时跳类目 / L4 模型分层 / L6 缓存 | [taxonomy.yaml](taxonomy.yaml) 的 `cost_per_call` |
 | **Extensibility** | L1 多入口 / L2 双系统 / L3 strategy 模式 / L4 LLMClient 抽象 / L5 Qdrant 可换 | [ADR-0001/0002/0003/0006](adr/) |
 

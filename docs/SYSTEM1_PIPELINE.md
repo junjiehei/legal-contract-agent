@@ -67,7 +67,7 @@ flowchart LR
 | Stage | 输入 | 输出 | 本质 |
 |-------|------|------|------|
 | 1 Ingestion | 文件路径 / bytes | `IngestResult`（条款列表 + 元数据） | 多模态归一为结构化条款 |
-| 2 Router | `IngestResult` | `{category: [候选 Clause]}` | 扇出 + 预筛，省算力 |
+| 2 Router | `IngestResult` | `{category: [候选条 LegalNode]}` | 扇出 + 预筛，省算力 |
 | 3 Detectors | 候选条款 + 类目策略 | `list[Finding]`（原始） | 每类目独立判违法 |
 | 4 Verifier | 原始 Findings | `list[Finding]`（已复核） | 降误报、校验引用、定严重度 |
 | 5 Aggregator | 已复核 Findings + 元数据 | `ReviewReport` | 装配最终报告 |
@@ -118,28 +118,8 @@ class SourceFormat(str, Enum):
     IMAGE       = "image"
     UNKNOWN     = "unknown"
 
-@dataclass
-class Clause:
-    """切分后的单个条款 —— Pipeline 后续所有阶段的最小处理单元。"""
-    id: str                              # "clause_0007"，文档内稳定
-    text: str                            # 规范化后的条款正文
-    source_method: str                   # "python-docx" / "pdfplumber" / "paddleocr" / "qwen-vl"
-    confidence: float = 1.0              # 该条款文本可信度（OCR/VLM < 1.0）
-    # —— 结构定位 ——
-    chapter: Optional[str] = None        # "第三章 工作时间和休息休假"
-    article_number: Optional[int] = None # 7（第七条）
-    article_label: Optional[str] = None  # "第七条"
-    section: Optional[str] = None         # 条内款项 "（二）"
-    parent_id: Optional[str] = None       # 嵌套款项指向父条
-    # —— 字符定位（用于前端高亮、证据回溯）——
-    char_start: int = 0
-    char_end: int = 0
-    preceding_chars: str = ""            # 上文窗口（detector 需要上下文）
-    following_chars: str = ""
-    # —— 多模态定位（OCR/VLM 来源才有）——
-    page: Optional[int] = None
-    bbox: Optional[tuple[float, float, float, float]] = None
-    image_path: Optional[str] = None
+# 条款的结构表示 = LegalNode（Legal AST 的节点，定义见 §3.6），取代了早期的 Clause
+# （更全：树 / 祖先路径 / 引用 / 来源块）。检测的主单元 = type=article 的节点。
 
 @dataclass
 class DocumentMetadata:
@@ -160,7 +140,7 @@ class IngestResult:
     source_path: str
     source_format: SourceFormat
     metadata: DocumentMetadata
-    clauses: list[Clause]
+    ast: "LegalAST"                      # ⑤ 产物：法律结构树（§3.6），取代旧 clauses: list[Clause]
     warnings: list[str] = field(default_factory=list)
     timing_ms: float = 0.0
     quality_score: float = 1.0           # 入料整体质量（影响最终报告可信度）
@@ -179,7 +159,7 @@ class Finding:
     """一个风险点。detector 产出，verifier 复核，aggregator 汇总。"""
     finding_id: str
     category: str                        # taxonomy 10 类目之一
-    clause_id: str                       # 指向触发的 Clause
+    clause_id: str                       # 指向触发的条（LegalNode.node_id）
     risk_level: RiskLevel
     severity: Severity
     violation: bool
@@ -1133,39 +1113,123 @@ def normalize(parsed: RawParse) -> NormalizedDoc:
 
 **④ 不做的事**：认实体、归术语、连引用、建条款层级——那些要"懂法律"，是 ⑤/⑥/Detection 的活。④ 只做安全的"形"清洗。
 
-### 3.6 Module ⑤ Segmentation（切条款）
+### 3.6 Module ⑤ Segmentation（切条款：拼成法律结构树 Legal AST）
 
-把全文切成 `list[Clause]`，带层级与字符定位。这是后续检测的最小单元，切错直接拖累召回。
+**它干嘛**：④ 给的是一串洗净的"块"（版面段落）。⑤ 把它们**按法律结构拼成一棵树**（Legal AST）——从"物理段落"升级到"逻辑条款"。这一步要懂法律文件套路（第X章/第X条/（一）），属逻辑层。**只建结构，不判风险、不抽字段。**
 
-策略（分层回退）：
+**输入** `NormalizedDoc`（④ 的洗净块）→ **输出** `LegalAST`（树）。
+
+**例子**——这段合同：
+```
+第二章 劳动报酬
+  第七条 乙方月工资为8000元，包括：
+    （一）基本工资5000元
+    （二）绩效工资3000元
+```
+拼成树（每个框 = 一个 LegalNode）：
+```
+chapter 第二章「劳动报酬」
+ └ article 第七条  text="乙方月工资为8000元，包括："
+     ├ item（一）text="基本工资5000元"
+     └ item（二）text="绩效工资3000元"
+```
+检测在"第七条"上做（看它的 `full_text` = 自己 + 两个款），引用能精确到"第七条第（一）项"。
+
+#### LegalNode —— 一个节点（树的基本单位）
+
+| 字段 | 含义 | 例子 |
+|------|------|------|
+| `node_id` | 文档内唯一编号 | "art_007" / "item_007_1" |
+| `type` | 节点类型 | document/preamble/chapter/article/item/table/signature/paragraph |
+| `text` | **本节点自己的正文**（不含子节点） | "乙方月工资为8000元，包括：" |
+| `number` / `label` | 数字编号 / 原文标签 | 7 / "第七条"、"（一）" |
+| `title` | 标题（一般只有章有） | "劳动报酬" |
+| `parent_id` / `children` | 父 / 子节点 | — |
+| `path` | 祖先标签链（给检测做上下文） | ["第二章 劳动报酬","第七条"] |
+| `references` | 本节点出现的引用 | 见下面 Reference |
+| `source_block_ids` | 来自哪些 ④ 的块（可追溯/跳原文） | ["blk_021","blk_022"] |
+| `page` | 起始页 | 2 |
+| `confidence` | 结构识别多确定（编号乱/OCR歪→低） | 0.6 |
 
 ```python
-def segment(text: str, blocks: list[TextBlock]) -> list[Clause]:
-    # 1) 首选：法条式标记
-    if re.search(ARTICLE_RE, text):          # 第[一二…\d]+条
-        clauses = split_by_article(text)     # 同时抓 chapter（第X章）建立层级
-    # 2) 次选：编号/项目符号
-    elif re.search(NUMBERED_RE, text):       # 一、 / （一） / 1.
-        clauses = split_by_numbering(text)
-    # 3) 兜底：按段落 + 标题启发式
-    else:
-        clauses = split_by_paragraph(blocks)
-    # 4) 统一补：char_start/end、preceding/following 窗口、page/bbox（来自 block）、id
-    return finalize(clauses, text, blocks)
+class NodeType(str, Enum):
+    DOCUMENT="document"; PREAMBLE="preamble"; CHAPTER="chapter"
+    ARTICLE="article"; ITEM="item"; TABLE="table"
+    SIGNATURE="signature"; PARAGRAPH="paragraph"
+
+@dataclass
+class LegalNode:
+    node_id: str
+    type: NodeType
+    text: str                                  # 本节点正文（不含子）
+    number: int | None = None
+    label: str | None = None
+    title: str | None = None
+    parent_id: str | None = None
+    children: list["LegalNode"] = field(default_factory=list)
+    path: list[str] = field(default_factory=list)
+    references: list["Reference"] = field(default_factory=list)
+    source_block_ids: list[str] = field(default_factory=list)
+    page: int | None = None
+    confidence: float = 1.0
+
+    @property
+    def full_text(self) -> str:                # 自己 + 所有子节点正文（检测"条"时用）
+        ...
 ```
 
-要点：
-- **层级**：第X章 → chapter；第X条 → article_number/label；条内（一）（二）→ section + parent_id，保证嵌套不丢。
-- **定位**：`char_start/end` 用于前端高亮与证据回溯；OCR/VLM 来源补 `page/bbox/image_path`。
-- **上下文窗口**：`preceding_chars/following_chars` 各取 ~200 字，供 detector 看上下文（很多违法判断要看相邻条款）。
-- **粒度（已倾向默认）**：以"条"为基本 Clause；过长条（含多款且语义独立）二次拆为子 Clause，`parent_id` 指回。
+#### Reference —— 一条引用
+
+| 字段 | 含义 | 例子 |
+|------|------|------|
+| `raw` | 引用原文 | "本合同第八条" / "《劳动合同法》第十九条" |
+| `kind` | 内部 or 外部 | internal / external |
+| `target_node_id` | 内部引用指向的节点（⑤ 连） | "art_008" |
+| `target_law` | 外部法条（**只标不查**，留 Detection/RAG） | "劳动合同法 第十九条" |
+
+```python
+@dataclass
+class Reference:
+    raw: str
+    kind: Literal["internal", "external"]
+    target_node_id: str | None = None
+    target_law: str | None = None
+```
+
+#### LegalAST —— 整棵树（⑤ 的最终产物）
+
+```python
+@dataclass
+class LegalAST:
+    root: LegalNode                            # type=document
+    nodes_by_id: dict[str, LegalNode]          # id→节点（连引用、检测查节点）
+    has_structure: bool                        # True=有编号建了树；False=平铺兜底
+    warnings: list[str] = field(default_factory=list)
+
+    def articles(self) -> list["LegalNode"]: ...   # 所有"条"——检测主单元
+    def preamble_text(self) -> str: ...            # 首部文本（给 ⑥ 抽要素）
+```
+
+#### 怎么建（算法）
+
+扫一遍块 → 认编号标记（**和 ④ 修断行共享那套"编号正则"**）→ 栈式拼树：
+- 配 `第X章` → 压一个 chapter；`第X条` → 挂当前 chapter 下的 article；`（一）/1.` → 挂当前 article 下的 item；③ 的表格块 → 挂当前 article 下的 table 节点。
+- 第一条之前的内容 → **preamble（首部）**；末尾"甲方（盖章）/乙方（签字）"→ **signature（尾部）**。
+- 啥都不配（无编号的简易合同）→ **平铺兜底**：每段当一个 article、无层级、`has_structure=False`。
+- 每个节点补：来源块 id（可追溯）、祖先 `path`、结构 `confidence`（编号乱/缺/OCR歪 → 降级 + 记 warnings）。
+- 引用：内部"本合同第X条"→ 连到对应节点；外部"《劳动合同法》第X条"→ 只标、不查原文。
+
+#### ⑤ 不做的事
+
+判风险/类目（→ Detection）、抽元数据字段（→ ⑥，⑤ 只圈出 preamble 给它）、切检索块/生成检索对象（→ RAG）。**⑤ 只认结构。**
 
 ### 3.7 Module ⑥ Metadata Extraction（抽要素）
 
 抽 `DocumentMetadata`。规则优先，LLM 兜底。
 
 ```python
-def extract_metadata(text: str, clauses: list[Clause]) -> DocumentMetadata:
+def extract_metadata(ast: "LegalAST") -> DocumentMetadata:
+    text = ast.preamble_text()           # 首部文本（甲乙方/期限/日期都在这，§3.6）
     md = DocumentMetadata()
     # 1) 规则层：合同首部高度结构化，正则可拿大部分
     md.party_a_name = first_match([r"甲方[（(]?[^）)]*[）)]?[:：]\s*(.+)", ...])
@@ -1195,11 +1259,11 @@ def ingest(source, document_id) -> IngestResult:
     ctx = ParseContext(fmt=fmt, options=options)
     raw_parse = execute_plan(plan, raw, ctx)             # ③ 执行计划（逐 ParseStep + 兜底）
     normalized = normalize(raw_parse)                    # ④ 清洗 → NormalizedDoc（§3.5）
-    clauses = segment(normalized.blocks)                 # ⑤ 由块构建 Legal AST（§3.6）
-    metadata = extract_metadata(clean, clauses)          # ⑥
+    ast = segment(normalized)                            # ⑤ 建 Legal AST（§3.6）
+    metadata = extract_metadata(ast)                     # ⑥ 从首部抽要素
     return IngestResult(
         document_id=document_id, source_path=path,
-        source_format=fmt.identity.detected_format, metadata=metadata, clauses=clauses,
+        source_format=fmt.identity.detected_format, metadata=metadata, ast=ast,
         warnings=collect_warnings(fmt, raw_parse),
         quality_score=raw_parse.parse_confidence,
         used_ocr=raw_parse.used_ocr, used_vlm=raw_parse.used_vlm,
@@ -1215,23 +1279,24 @@ def ingest(source, document_id) -> IngestResult:
 把 `IngestResult` 扇出给 10 个 detector，并**预筛候选条款**（不是每条都喂给每个 detector，省 LLM 调用）。
 
 ```python
-def route_detection(ing: IngestResult, options: ReviewOptions) -> dict[str, list[Clause]]:
+def route_detection(ing: IngestResult, options: ReviewOptions) -> dict[str, list[LegalNode]]:
     cats = options.categories or ALL_CATEGORIES         # 默认全 10 类（taxonomy）
+    articles = ing.ast.articles()                       # 检测主单元 = 所有"条"
     plan = {}
     for cat in cats:
-        plan[cat] = prefilter(ing.clauses, cat)         # 候选条款
+        plan[cat] = prefilter(articles, cat)            # 候选条
     return plan
 
-def prefilter(clauses, category) -> list[Clause]:
+def prefilter(articles, category) -> list[LegalNode]:
     """两道筛：关键词命中 ∪ 语义相似。宁可多召回（后面 detector 会精判）。"""
     kw = TAXONOMY[category]["keywords"]                  # 来自 taxonomy.yaml
-    by_kw  = [c for c in clauses if any(k in c.text for k in kw)]
-    by_emb = embed_topk(clauses, category_anchor(category), k=K_PREFILTER)
+    by_kw  = [a for a in articles if any(k in a.full_text for k in kw)]
+    by_emb = embed_topk(articles, category_anchor(category), k=K_PREFILTER)
     return dedup(by_kw + by_emb)
 ```
 
 - 预筛用**召回优先**（关键词 ∪ 语义），漏检代价 > 多算代价。
-- 输出 `{category: [候选 Clause]}`，交给对应 detector。
+- 输出 `{category: [候选条（LegalNode）]}`，交给对应 detector。
 
 ---
 
@@ -1242,8 +1307,8 @@ def prefilter(clauses, category) -> list[Clause]:
 ```python
 @dataclass
 class DetectContext:
-    clause: Clause
-    siblings: list[Clause]               # 同文档相关条款（如合同期限影响试用期判定）
+    clause: LegalNode                    # 待检测的"条"节点
+    siblings: list[LegalNode]            # 同文档相关条（如合同期限影响试用期判定）
     metadata: DocumentMetadata
     options: ReviewOptions
 
@@ -1299,7 +1364,7 @@ harness 的 detector 签名是 `Callable[[str], Prediction]`（只吃 clause 文
 ```python
 def as_eval_detector(detector: Detector) -> Callable[[str], Prediction]:
     def _fn(clause_text: str) -> Prediction:
-        ctx = DetectContext(clause=Clause(id="eval", text=clause_text),
+        ctx = DetectContext(clause=LegalNode(node_id="eval", type=NodeType.ARTICLE, text=clause_text),
                             siblings=[], metadata=DocumentMetadata(), options=DEFAULT)
         findings = detector.detect(ctx)
         if not findings:
@@ -1463,7 +1528,7 @@ def run_review(source, options: ReviewOptions = DEFAULT) -> ReviewReport:
 
 ## 附录 A：完整 dataclass 清单（实现时以此为准）
 
-§2（`SourceFormat / Clause / DocumentMetadata / IngestResult / Finding / ReviewReport`）+ §3.2.2（`IdentityDetection / *ShapeDetection / FormatDetectionResult`）+ §3.4（`RawParse / TextBlock`）+ §5.1（`DetectContext`）+ `ReviewOptions`：
+§2（`SourceFormat / DocumentMetadata / IngestResult / Finding / ReviewReport`）+ §3.2.2（`IdentityDetection / *ShapeDetection / FormatDetectionResult`）+ §3.3（`ProcessingPlan / ParseStep / ContentGateResult / QualityAssessment / RoutingDecision`）+ §3.4（`RawParse / TextBlock / Table`）+ §3.5（`NormalizedDoc`）+ §3.6（`LegalNode / Reference / LegalAST`，取代旧 Clause）+ §5.1（`DetectContext`）+ `ReviewOptions`：
 
 ```python
 @dataclass
