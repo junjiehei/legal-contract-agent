@@ -1,77 +1,82 @@
 # 中国劳动合同审查 Agent
 
-面向劳动者的 AI 合同审查系统：识别违法/不利条款、引用相关法条、给出修改建议。
+一个面向劳动者的合同审查工具，尝试帮普通人看懂自己的劳动合同里有没有可能违法或不利的条款，并给出对应的法律依据和修改方向。
 
-> **⚠️ 本工具不构成法律意见**。所有 AI 输出仅供参考，重要决策须经持牌律师复核。详见 [`docs/DISCLAIMER.md`](docs/DISCLAIMER.md)。
+> **本工具不构成法律意见**。所有结论由 AI 生成，仅供参考；重要决策请咨询律师。详见 [DISCLAIMER](docs/DISCLAIMER.md)。
 
-## 状态
+## 现状
 
-**P1 已完成（2026-05-18）** — 数据采集、Taxonomy v0.2、Eval 骨架（200 条 ground truth + harness + 3 baseline）。
+项目处于**设计 + 早期实现**阶段，尚未对外开放。目前主要在做：
 
-当前等待 P2 启动（计划 2026-06-09）。
+- 架构设计文档（成型中）
+- Ingestion 流水线 6 模块（设计完成，待编码）
+- 评测集（200 条合成样本，10 类目 × 20）
+- 法律条文采集（劳动相关 7 部）
 
-## 项目导航
+准确率和功能都在迭代，**不建议直接用于真实重要决策**。
 
-| 路径 | 用途 |
-|------|------|
-| `docs/ARCHITECTURE.md` | **架构总览 + mermaid 图**（先读这个） |
-| `docs/EVAL_GUIDE.md` | 评测体系详解（指标、阈值、baseline） |
-| `docs/DISCLAIMER.md` | 免责声明（法律 AI 必读） |
-| `data/INVENTORY.md` | 数据资产清单（**每次新增数据必须更新**） |
-| `data/laws/MANIFEST.md` | 法律采集 checklist（W1 当前任务） |
-| `docs/adr/` | 架构决策记录 |
-| `eval/labeled/` | Ground truth 标注（P1-W3 起） |
-| `src/` | 业务代码（P2 起） |
-| `scripts/` | 采集和工具脚本 |
-
-
-
-## 运行中的服务
-
-| 服务 | 状态 | 端口 | 存储 |
-|------|------|------|------|
-| Qdrant 向量库 | running (Docker) | 6333 (HTTP), 6334 (gRPC) | `/data/qdrant` |
-
-## 文档导航
-
-**从这里开始**：[docs/HLD.md](docs/HLD.md) — 总体架构（6 层 + 跨层关切 + 演进路线）
+## 文档
 
 | 文档 | 内容 |
 |------|------|
-| [docs/HLD.md](docs/HLD.md) | 总体架构设计（顶层视角）⭐ |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 详细组件交互 + 数据流 + 双系统 |
-| [docs/EVAL_GUIDE.md](docs/EVAL_GUIDE.md) | 评测体系（指标 / 阈值 / baseline） |
-| [docs/taxonomy.yaml](docs/taxonomy.yaml) | 10 风险类目 source of truth |
+| [docs/HLD.md](docs/HLD.md) | 总体架构（6 层 + 跨层关切） |
+| [docs/SYSTEM1_PIPELINE.md](docs/SYSTEM1_PIPELINE.md) | 合同审查流水线的实现级设计 |
+| [docs/SYSTEM2_CHAT_AGENT.md](docs/SYSTEM2_CHAT_AGENT.md) | 对话式 agent（骨架，P5 才动） |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 组件交互 / 数据流 / 序列图 |
+| [docs/EVAL_QA.md](docs/EVAL_QA.md) | 评测与质量保障 |
+| [docs/SECURITY_COMPLIANCE.md](docs/SECURITY_COMPLIANCE.md) | 数据安全 + AI 合规 + 责任划分 |
+| [docs/DEPLOYMENT_OPS.md](docs/DEPLOYMENT_OPS.md) | 部署模式（含私有化） |
+| [docs/taxonomy.yaml](docs/taxonomy.yaml) | 10 风险类目 |
+| [docs/adr/](docs/adr/) | 关键决策记录 |
 | [docs/DISCLAIMER.md](docs/DISCLAIMER.md) | 免责声明 |
-| [docs/adr/](docs/adr/) | 架构决策记录（ADR-0001~0010） |
-| [data/INVENTORY.md](data/INVENTORY.md) | 数据资产清单 |
-| [eval/README.md](eval/README.md) | Eval 数据 schema |
 
-## 技术栈
+## 大致做法（详见上面的文档）
 
-| 层 | 选型 | 备注 |
-|----|------|------|
-| Language | Python 3.11+ | |
-| LLM | DeepSeek（V3 主力 + R1 推理） | LLMClient 抽象，可切 provider |
-| Embedding | bge-large-zh-v1.5 | 中文 SOTA |
-| Vector DB | Qdrant | hybrid search 必须 |
-| Orchestration | 自研最小化 + LlamaIndex (retrieval 部分) | 不用 LangChain 全家桶 |
-| Frontend | Streamlit | P4 才动手 |
+- 双系统：一个确定性的审查流水线（System 1，P2–P4）+ 之后的对话式 agent（System 2，P5）。
+- 流水线分阶段：入料 → 解析 → 切条款 → 检测 → 复核 → 出报告；每条结论尽量带法律条文出处。
+- 多模态输入按需走 OCR / VLM（P3 起），还在评估中。
+- 立场上**依法中立**，产品体验**优先服务劳动者**——但不替代律师。
 
-详见 `docs/adr/`。
+## 技术栈（仍可能调整）
 
-## 时间线
+| 层 | 当前选型 | 备注 |
+|----|---------|------|
+| Language | Python 3.10+ | |
+| LLM | DeepSeek V3 / R1 | 接口抽象、可切其他 provider |
+| Embedding | bge-large-zh-v1.5 | 中文常用 |
+| Vector DB | Qdrant | |
+| PDF 解析 | pdfplumber（MIT） | 许可证宽松；pypdf 仅用于廉价格式探测 |
+| OCR / VLM | PaddleOCR / Qwen-VL | P3 起 |
+| 前端 | FastAPI + HTMX | P4 起；服务端渲染，便于私有部署 |
+| 编排 | 自研最小化 + LlamaIndex（仅检索部分） | 不全栈框架化 |
 
-- **P1 奠基** 5/19–6/8（提前到 5/17 起）✅ 2026-05-18 完成— 数据 + Taxonomy + Eval 骨架
-- **P2 纵向打通** 6/9–6/29 — Pipeline 单类目，引入 Tool Use + LLMClient
-- **P3 横向铺开** 6/30–7/27 — Pipeline 全 10 类目 + RAG 成熟
-- **P4 深度打磨** 7/28–8/24 — Eval 驱动改进 + 性能 + MCP server 包装
-- **P5a Chat Agent v2** 8/25–8/28 — Skills + Memory + Sub-agents + MCP client（基于 Claude Agent SDK）
-- **P5b 文档 + Demo 发布** 8/29–8/31 — 架构文档 + Demo + 文档归档
+更多决策见 [`docs/adr/`](docs/adr/)。
 
-## 双系统架构（详见 ADR-0006）
+## 大致时间表
 
-| 系统 | 风格 | 时序 | 角色 |
-|------|------|------|------|
-| Pipeline（合同审查） | workflow | P2-P4 | 确定性 detection；P4 末包装为 MCP server |
-| Chat Agent v2（法律咨询） | agent loop | P5a | 限定 10 taxonomy 类目；通过 MCP client 调用 pipeline |
+| 阶段 | 时间 | 干啥 |
+|------|------|------|
+| P1 | 5/17–6/8 | 数据 + 类目 + 评测骨架（已就位） |
+| P2 | 6/9–6/29 | 流水线打通（部分类目） |
+| P3 | 6/30–7/27 | 全类目 + RAG + 多模态 |
+| P4 | 7/28–8/24 | 评测打磨 + 前端 + MCP |
+| P5 | 8/25–8/31 | 对话 agent + 部署与文档 |
+
+各阶段都可能调整或推迟，节奏先做精再扩。
+
+## 运行中的服务
+
+| 服务 | 状态 | 端口 |
+|------|------|------|
+| Qdrant 向量库 | 运行中（Docker） | 6333 / 6334 |
+
+## 局限
+
+- 评测集是 LLM 合成数据 + 人工抽检，不是真实判决书或仲裁案例。
+- 法律条文截至 2026-05；法律会修订，结论需对照最新版本核实。
+- 准确率仍在爬坡，复杂或边界案例倾向于"标低置信、建议人工复核"。
+- 努力依法中立、优先服务劳动者，但**不替代律师**。
+
+## License
+
+[Apache-2.0](LICENSE)。
