@@ -1290,8 +1290,8 @@ def extract_metadata(ast: "LegalAST") -> DocumentMetadata:
 
 #### PII 时序（关键）
 
-`party_b_name`（劳动者姓名）等 PII：**只用规则抽、绝不送 LLM**。⑥ 的 LLM 兜底只补**非 PII** 字段，且**送 LLM 前必先脱敏**。
-> ⚠️ 管线级脱敏在 §8 是"ingest 之后"，但 ⑥ 在 ingest 内部就调 LLM。所以规则收紧成：**任何 LLM 调用前都先脱敏（最好在 LLMClient 层强制）**，⑥ 兜底不例外。PII 永不进 LLM。
+`party_b_name`（劳动者姓名）等 PII：**只用规则抽**；任何 LLM 调用（含 ⑥ 兜底）**前必先脱敏**——由 `PrivacyKeeper` 统一守门，**详见 [PRIVACY.md](PRIVACY.md)**。
+> ⑥ 规则层先抽出名字 → 调 `privacy.set_session_pii(names)` → 之后所有 LLM 调用才进入。词表没设就抛 `SessionNotInitialized`，拒发。
 
 #### 可追溯 + 缺字段 + 边界
 
@@ -1524,6 +1524,8 @@ def run_review(source, options: ReviewOptions = DEFAULT) -> ReviewReport:
 | **确定性** | 阶段间 dataclass 契约稳定；LLM 固定低温度；结构稳定即便文字微变 |
 
 ### 9.1 审计挂载原则（哪些模块需要审计）
+
+> **实现见 [AUDIT.md](AUDIT.md)。下文是"哪儿要审计"的原则，不是实现细节。**
 
 不是每个模块都要审计。**审计挂在三种东西上**，三样都不沾的模块不需要单独审计：
 

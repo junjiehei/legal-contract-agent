@@ -5,6 +5,7 @@
 **Owner**: Dylan
 **读者**: 任何关心"这产品会不会泄露隐私、合不合规、出事谁负责"的人
 **关联**: [ADR-0007 Confidentiality](adr/ADR-0007-confidentiality.md), [DISCLAIMER.md](DISCLAIMER.md), [PRD.md](PRD.md), [DEPLOYMENT_OPS.md](DEPLOYMENT_OPS.md)
+**实现承载**: 本文档是**政策层**——脱敏/PII 处理的实现详见 [PRIVACY.md](PRIVACY.md)，审计日志的实现详见 [AUDIT.md](AUDIT.md)。
 
 ---
 

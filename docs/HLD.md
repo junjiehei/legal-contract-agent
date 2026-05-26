@@ -400,6 +400,7 @@ flowchart LR
 
 ### L4 模型层
 - [ADR-0001 LLM Selection](adr/ADR-0001-llm-selection.md) ✅ Accepted
+- [LLM_CLIENT.md](LLM_CLIENT.md) — LLM 调用统一门面（ADR-0001 的实现承载）
 - [ADR-0002 Vector DB + Embedding](adr/ADR-0002-vector-db-embedding.md)
 - [ADR-0008 Multimodal Input](adr/ADR-0008-multimodal-input.md)
 
@@ -412,7 +413,9 @@ flowchart LR
 
 ### L6 基础设施层
 - [ADR-0007 Confidentiality Architecture](adr/ADR-0007-confidentiality.md)
-- [SECURITY_COMPLIANCE.md](SECURITY_COMPLIANCE.md) — 安全合规（数据安全 + AI 合规 + 备案 + 责任划分）
+- [SECURITY_COMPLIANCE.md](SECURITY_COMPLIANCE.md) — 安全合规（政策层：数据安全 + AI 合规 + 备案 + 责任划分）
+- [PRIVACY.md](PRIVACY.md) — 隐私守门（实现层：PII 识别 / 抹换 / 核查 / 失败处理）
+- [AUDIT.md](AUDIT.md) — 审计层（所有"留痕"事的统一服务）
 - [DEPLOYMENT_OPS.md](DEPLOYMENT_OPS.md) — 部署与运维（含私有化）
 - [DISCLAIMER.md](DISCLAIMER.md)
 - DEPLOYMENT_MODES.md (待写，P5b)
