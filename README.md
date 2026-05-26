@@ -1,6 +1,6 @@
-# 中国劳动合同审查 Agent
+# 劳动合同阅读辅助
 
-一个面向劳动者的合同审查工具，尝试帮普通人看懂自己的劳动合同里有没有可能违法或不利的条款，并给出对应的法律依据和修改方向。
+一个**供个人阅读劳动合同时参考**的辅助工具：尝试标注一些可能值得多看一眼的条款，并附上相关法律条文。**仅供参考，不构成法律意见，也不替代律师。**
 
 > **本工具不构成法律意见**。所有结论由 AI 生成，仅供参考；重要决策请咨询律师。详见 [DISCLAIMER](docs/DISCLAIMER.md)。
 
@@ -20,7 +20,7 @@
 | 文档 | 内容 |
 |------|------|
 | [docs/HLD.md](docs/HLD.md) | 总体架构（6 层 + 跨层关切） |
-| [docs/SYSTEM1_PIPELINE.md](docs/SYSTEM1_PIPELINE.md) | 合同审查流水线的实现级设计 |
+| [docs/SYSTEM1_PIPELINE.md](docs/SYSTEM1_PIPELINE.md) | 合同处理流水线的实现级设计 |
 | [docs/SYSTEM2_CHAT_AGENT.md](docs/SYSTEM2_CHAT_AGENT.md) | 对话式 agent（骨架，P5 才动） |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 组件交互 / 数据流 / 序列图 |
 | [docs/EVAL_QA.md](docs/EVAL_QA.md) | 评测与质量保障 |
@@ -32,7 +32,7 @@
 
 ## 大致做法（详见上面的文档）
 
-- 双系统：一个确定性的审查流水线（System 1，P2–P4）+ 之后的对话式 agent（System 2，P5）。
+- 双系统：一个确定性的处理流水线（System 1，P2–P4）+ 之后的对话式辅助（System 2，P5）。
 - 流水线分阶段：入料 → 解析 → 切条款 → 检测 → 复核 → 出报告；每条结论尽量带法律条文出处。
 - 多模态输入按需走 OCR / VLM（P3 起），还在评估中。
 - 立场上**依法中立**，产品体验**优先服务劳动者**——但不替代律师。
