@@ -1380,36 +1380,195 @@ class Detector(Protocol):
 | `rag_heavy_llm` | non_compete / confidentiality_ip / termination | 混合检索 + rerank → 多片段推理 | ✓ | 重 |
 | `multi_step_reasoning` | wage_composition | 多步分解（拆构成→比最低工资→查加班基数→判结构） | ✓×N | 视步 |
 
-### 5.3 单 detector 内部结构（以 probation_period 为例，`rule_assisted_llm`）
+### 5.3 五级策略到代码（DetectorRegistry + 5 个基类）
+
+§5.2 的表只是说"哪一档用哪种实现机制"。落到代码上，五档分别对应一个基类，所有具体类目都继承自其中一个。**`DetectorRegistry` 启动时读 taxonomy.yaml 的 `detection.strategy` 字段，按档把具体子类装配进来**，运行时按类目名取实例——这样新增一个类目，只用写一个子类、改一行 taxonomy，主体不动。
 
 ```python
-class ProbationDetector:
-    category = "probation_period"
-    strategy = "rule_assisted_llm"
+class Detector(Protocol):
+    category: str
+    strategy: str
+    def detect(self, ctx: DetectContext) -> list[Finding]: ...
 
-    def detect(self, ctx) -> list[Finding]:
-        # 1) 规则抽事实
-        term   = parse_contract_term(ctx.metadata)      # 合同期限（月）
-        probation = parse_probation_len(ctx.clause.text)# 试用期（月）
-        if probation is None:
-            return []                                   # 该条不涉试用期
-        # 2) 规则硬判（劳动合同法 19 条期限对照表）—— 能规则定的不浪费 LLM
-        legal_max = probation_cap(term)                 # 3年以上→6月；1-3年→2月；…
-        clearly_illegal = probation > legal_max
-        # 3) LLM 判语义边界 + 生成理由/建议（仅 borderline 或需措辞时）
-        if clearly_illegal:
-            verdict = build_finding(violation=True, severity="high",
-                law=["劳动合同法 第十九条"], reason=..., suggestion=...)
-        else:
-            verdict = self._llm_judge(ctx, facts={"term": term, "probation": probation})
-        return [verdict] if verdict else []
+class DetectorRegistry:
+    """类目名到检测器实例的总开关。启动时构建，运行时按类目取实例。"""
+    _instances: dict[str, "Detector"]
+
+    def get(self, category: str) -> "Detector": ...
+
+    @classmethod
+    def from_taxonomy(
+        cls,
+        taxonomy_path: str,
+        llm_client: "LLMClient",
+        law_loader: "LawLoader",
+        rag_retriever: "RAGRetriever | None" = None,
+    ) -> "DetectorRegistry":
+        """读 taxonomy.yaml；按每类的 detection.strategy 选基类、装具体子类。"""
 ```
 
-- **规则先行**：能规则确定的（试用期明显超期）不调 LLM，省钱 + 确定。
-- **LLM 只做规则做不了的**：语义模糊、措辞、边界（如"试用期工资低于约定 80%"需读多处）。
-- `rag_*` detector 多一步检索（调 RAG_DESIGN.md 的检索接口）；`multi_step_reasoning` 把 detect 拆成多个 LLM 调用，中间结果串联。
+五档对应的基类与上线节奏：
 
-### 5.4 eval adapter（对接 harness）
+| strategy（taxonomy 字段） | 基类 | 干啥 | 落地阶段 |
+|---|---|---|---|
+| `rule_only` | `RuleOnlyDetector` | 全规则判定，不调 LLM | 暂留口（10 类目目前无此档） |
+| `rule_assisted_llm` | `RuleAssistedLLMDetector` | 规则抽事实 + 规则硬判；LLM 只补语义边界与措辞 | **P2**（试用期 / 违约金 / 服务期） |
+| `rag_light_llm` | `RAGLightLLMDetector` | 轻检索 top-k 法条 → LLM 带引用判 | P3 |
+| `rag_heavy_llm` | `RAGHeavyLLMDetector` | 混合检索 + rerank → 多片段推理 | P3 |
+| `multi_step_reasoning` | `MultiStepReasoningDetector` | 多步分解 → 多次 LLM → 中间结果串联 | P4 |
+
+子类只填**当前类目的差异点**（识别条件、事实结构、规则表、prompt 文件名）；通用流程（脱敏前置、调 LLM、组 Finding、写审计）由基类兜住。
+
+### 5.4 `RuleAssistedLLMDetector` 基类骨架（P2 主战场）
+
+P2 三个 detector 都走 `rule_assisted_llm` 这一档，所以这个基类要先打牢。基类把"抽事实 → 规则判 → LLM 补判 → 组 Finding"这条流水线封死，子类只填**怎么抽**、**怎么判**、**怎么和 LLM 说话**。
+
+```python
+class RuleAssistedLLMDetector:
+    # —— 子类必填 ——
+    category: ClassVar[str]                              # 类目名
+    strategy: ClassVar[str] = "rule_assisted_llm"
+    laws: ClassVar[list[str]]                            # 引用法条 ID，如 ["劳动合同法.19", "劳动合同法.20"]
+    prompt_template: ClassVar[str]                       # prompts/detectors/xxx.j2
+
+    def __init__(self, llm_client: "LLMClient", law_loader: "LawLoader"):
+        self._llm = llm_client
+        self._laws = law_loader
+
+    # —— 基类兜流程，子类不重写 ——
+    def detect(self, ctx: "DetectContext") -> list["Finding"]:
+        facts = self._extract_facts(ctx)
+        if facts is None:
+            return []                                    # 这条不涉本类目
+        verdict = self._rule_judge(facts, ctx)
+        if verdict.is_ambiguous:                         # 规则拿不准 → 让 LLM 看一眼
+            verdict = self._llm_judge(facts, verdict, ctx)
+        return self._build_findings(facts, verdict, ctx)
+
+    # —— 子类实现 ——
+    def _extract_facts(self, ctx: "DetectContext") -> "Facts | None": ...
+    def _rule_judge(self, facts: "Facts", ctx: "DetectContext") -> "RuleVerdict": ...
+    def _llm_judge(
+        self, facts: "Facts", verdict: "RuleVerdict", ctx: "DetectContext"
+    ) -> "RuleVerdict": ...
+
+    def _build_findings(
+        self, facts: "Facts", verdict: "RuleVerdict", ctx: "DetectContext"
+    ) -> list["Finding"]: ...
+```
+
+事实和判定结果统一用两个数据类承载：
+
+```python
+@dataclass
+class Facts:
+    """所有具体 detector 的事实包基类。子类按各自需要扩字段。"""
+
+@dataclass
+class RuleVerdict:
+    is_violation: bool | None = None                      # None = 规则没结论，留给 LLM
+    is_ambiguous: bool = False                            # True = 规则不确定，触发 LLM 复判
+    severity: Literal["high", "medium", "low", "none"] = "none"
+    violated_law_refs: list[str] = field(default_factory=list)
+    rule_reasoning: str = ""                              # 规则层的人话解释，给 LLM 当背景
+```
+
+P2 三个 detector 的事实包：
+
+```python
+@dataclass
+class ProbationFacts(Facts):
+    probation_months: int | None = None                   # 试用期长度（统一换算成月）
+    contract_duration_months: int | None = None           # 合同期限（月）
+    probation_wage: int | None = None                     # 试用期工资
+    formal_wage: int | None = None                        # 转正后工资
+    region: str = ""                                      # 用于查当地最低工资
+
+@dataclass
+class PenaltyFacts(Facts):
+    employee_pays_penalty: bool = False                   # 是否约定"劳动者向用人单位支付违约金"
+    mentions_service_period: bool = False                 # 是否提到服务期
+    mentions_non_compete: bool = False                    # 是否提到竞业限制
+    penalty_amount: int | None = None
+    raw_clause_text: str = ""                             # 原文留底，让 LLM 判语义
+
+@dataclass
+class ServicePeriodFacts(Facts):
+    service_period_months: int | None = None              # 约定的服务期
+    penalty_amount: int | None = None                     # 违反服务期的违约金
+    training_cost: int | None = None                      # 培训费用
+    training_nature_desc: str = ""                        # 培训性质的描述原文（判"专项"用）
+    has_decreasing_clause: bool = False                   # 是否含违约金随服务时间递减条款
+```
+
+### 5.5 P2 三个 detector 业务流程详解
+
+#### 5.5.1 内部流程五步
+
+每个 `rule_assisted_llm` 类型的 detector 内部都走同一套五步流程，下文三个具体 detector 都是这个骨架上长出来的。**第一步**：先看这条条款归不归本类目管——比如试用期检测器扫到"违约金"条款应当直接返回空，免得越权乱判。**第二步**：用正则、词表、查 metadata 之类的规则手段把关键事实抽出来，统一塞进 `Facts` 子类；如果连关键事实都抽不到，那就当作不涉本类目放过。**第三步**：拿事实进规则判定——能查表的查表（如试用期对照表）、能直接比的直接比（如"违约金 ≤ 培训费"），能给出明确结论的就直接给。**第四步**：只有规则确实拿不准（措辞模糊、需要语义理解）才把这一条原文 + 已抽事实 + 规则的初步意见拼成 prompt 喂给 LLM 复判，LLM 也只输出 JSON。**第五步**：把规则或 LLM 的结论组装成 `Finding`，附上法条引用、严重程度、给劳动者听的理由和建议。
+
+为什么强调"规则先行"？两个原因：一是能确定的事情没必要付 LLM 的钱，二是规则的结论可解释、可复现、可写测试，LLM 的结论只能背书。所以 P2 三个 detector 都遵循一个底线：**凡是查表查得到的、数字比得出来的，绝不让 LLM 来判**。
+
+#### 5.5.2 试用期检测器（probation_period）
+
+**业务上要回答四个问题**：合同里到底约了多长试用期？合同总期限是多少？这个试用期长度对照《劳动合同法》第十九条合不合规？试用期工资有没有低于转正工资 80% 或当地最低工资？
+
+第一步先在条款里找试用期长度——"试用期三个月"、"试用期为 60 天"都得识别出来，统一换算成月。同时去 metadata 取合同总期限（⑥ Metadata 已经抽好了，不用 LLM 再来一遍）。如果条款里压根没提试用期，直接返回空。
+
+第二步是第十九条的硬约束查表，写死在规则里：
+
+| 合同期限 | 试用期上限 |
+|---|---|
+| 3 个月以下（含 3 个月） | **不得约定试用期** |
+| 3 个月以上、不满 1 年 | 1 个月 |
+| 1 年以上、不满 3 年 | 2 个月 |
+| 3 年以上 / 无固定期限 | 6 个月 |
+
+试用期超表了就直接判违法，置信度高、`severity=high`、引用第十九条，不用问 LLM。试用期工资低于约定的 80% 或当地最低工资同理——是数字比较，规则就能下结论，引用第二十条。
+
+第三步只有在两种情况触发 LLM：一是措辞模糊（比如"试用期最长不超过 X 个月"这种描述性表达，规则不确定有没有约定具体期限）；二是要生成人话理由和修改建议给报告用——规则只给"违反第十九条"，怎么用劳动者听得懂的话讲清楚、怎么改才合规，让 LLM 写。这一步 LLM 只输出 JSON，且原文已脱敏。
+
+**三个坑要避**：第一，"3 个月以下"在法条里是含 3 个月的（"以下"含本数），所以恰好 3 个月的合同不能约试用期；第二，天和月的换算别按 30 天硬除，按"约定值或日历月"取整；第三，"试用期最长不超过 X 个月"这种表达里 X 是上限而不是约定值，规则别按确定数处理，交给 LLM。
+
+#### 5.5.3 违约金检测器（penalty_clause）
+
+**核心规则一句话**：《劳动合同法》第二十五条原则上禁止用人单位向劳动者约定违约金，只在两种情形下允许——服务期（第二十二条，对应专项培训）和竞业限制（第二十三条）。除此之外的"劳动者向用人单位支付违约金"，一律违法。
+
+四步流程是：第一步用正则和关键词识别条款里"违约金 / 赔偿金 / 应支付 / 应承担"这类字眼，确认这是个谈"劳动者掏钱给单位"的条款；第二步扫一下条款语境有没有提"服务期 / 培训 / 竞业 / 保密"，确定例外是否成立；第三步规则硬判——主体是劳动者付给单位、且不属于这两种例外，就是违法，引用第二十五条，`severity=high`；第四步只有当语义模糊（比如条款里"违约金"和"经济补偿"混着用、付款方向看不清楚）时才让 LLM 看原文判断真实方向，并生成理由和建议。
+
+**两个坑要避**：第一，**经济补偿金是单位给劳动者的、不是违约金**——条款里"经济补偿"出现的时候别按违约金抓；第二，**变相违约金**也算（比如"提前离职扣工资 5000 元"、"未满 X 年退还培训费 5 万元而该培训不是专项培训"），这种条款规则识别难度大，正好交给 LLM 看语义。
+
+#### 5.5.4 服务期检测器（service_period）
+
+服务期是违约金的合法例外之一，但条件卡得很严，必须**三条同时成立**才合法：一是用人单位为劳动者提供了**专项培训费用、专业技术培训**（普通入职培训、岗前培训不算）；二是约定的违约金数额**不得超过用人单位提供的培训费用**；三是违约金随服务期已履行部分**应当递减**（劳动者已经服务了一半，违约金至少减一半）。任何一条不满足都是违法。
+
+四步流程是：第一步识别条款里"服务期"字眼，没提就返回空；第二步抽四个事实——服务期长度、违约金数额、培训费、培训性质描述（用于判是不是"专项"）；第三步规则按顺序连环判：
+
+1. **培训性质**：条款里能不能找到"专项技术培训 / 专业技能培训 / 出国培训 / 专项费用"这类强信号？没有任何强信号 → 直接判违法（普通培训不能约服务期），引用第二十二条；
+2. **违约金 vs 培训费**：违约金 > 培训费 → 违法，引用第二十二条第二款；
+3. **递减条款**：条款里有没有"按已服务时间递减 / 按比例计算"这类表述？没有 → 违法。
+
+第三步前两条都是数字比较或关键词存在性，规则能下铁判。**只有第一条"培训性质"的语义判断有一定模糊度**——比如"为乙方提供专业培训"这种表达，到底算不算"专项"？这就是 LLM 复判的位置：把培训描述原文 + 规则的初步判断 + 第二十二条的"专项培训费用 / 专业技术培训"原文一起喂给 LLM，让它输出 `{is_specialized: bool, reasoning: ...}`。
+
+**两个坑要避**：第一，**服务期 ≠ 合同期限**——"本合同期限 3 年"不是服务期约定；第二，**入职培训不是专项培训**，"上岗前公司讲解规章制度"哪怕在条款里写得花里胡哨，本质上仍然不是专项。
+
+#### 5.5.5 共用基础设施
+
+三个 detector 都依赖一套共用组件，集中讲一次免得每个 detector 重复说明。
+
+**基类 `RuleAssistedLLMDetector`** 已经在 §5.4 给出骨架，三个 detector 各自继承它，只填差异点：`category`、`laws`、`prompt_template`，以及四个抽象方法的实现。
+
+**`LawLoader`** 是从 `data/laws/labor_contract_law.json` 之类的法条文件里按 ID 取条文原文的轻量加载器（`get("劳动合同法.19") → "用人单位与劳动者..."`）。它的输出会被 `_llm_judge` 拼进 prompt 里给 LLM 当依据，也会被 `_build_findings` 用来组装 `Finding.violated_law` 字段。
+
+**`LLMClient`** 不用 detector 自己关心脱敏、重试、审计——只要传 `caller="detector.probation"` 之类的标识，门面层（[LLM_CLIENT.md](LLM_CLIENT.md)）会处理好。LLM 调用前 [PRIVACY.md](PRIVACY.md) 的 `PrivacyKeeper` 已经被 `set_session_pii([...])` 初始化过（⑥ Metadata 阶段做的，详见 §3.7），所以姓名身份证都不会漏给 LLM。
+
+**Prompt 文件**外置在 `prompts/detectors/probation.j2 / penalty.j2 / service_period.j2`，Jinja2 模板渲染。这样改 prompt 不用动代码，eval 也能挂模板版本号做 A/B。
+
+#### 5.5.6 与 eval 的对接
+
+详见下一节 §5.6——三个 detector 实例化后通过 `as_eval_detector(...)` 转成 harness 期望的 `Callable[[str], Prediction]`，200 样本 eval 直接跑，比对 violation F1 是否明显超过 baseline 0.689。
+
+### 5.6 eval adapter（对接 harness）
 
 harness 的 detector 签名是 `Callable[[str], Prediction]`（只吃 clause 文本）。真实 detector 吃 `DetectContext`、吐 `list[Finding]`。用 adapter 桥接：
 
@@ -1574,7 +1733,7 @@ def run_review(source, options: ReviewOptions = DEFAULT) -> ReviewReport:
 
 | 阶段 | 内容 | 对应 Pipeline 模块 |
 |------|------|-------------------|
-| **P2 W4–6** | Ingestion（docx/pdf-text 优先）+ Format Detection + Segmentation + 3 个 `rule_assisted_llm` detector + Verifier 骨架 + Aggregator + 接 eval | §3（除多模态）、§4、§5(部分)、§6、§7 |
+| **P2 W4–6** | Ingestion（docx/pdf-text 优先）+ Format Detection + Segmentation + `DetectorRegistry` + 3 个 `rule_assisted_llm` detector（试用期 / 违约金 / 服务期）+ Verifier 骨架 + Aggregator + 接 eval | §3（除多模态）、§4、§5.3–§5.6、§6、§7 |
 | **P3 W7–10** | 多模态（PaddleOCR/Qwen-VL，ADR-0008）+ `rag_light/heavy` detector（接 RAG_DESIGN.md）+ 补齐类目 | §3.2 IMAGE/scanned 路径、§3.4 OCR/VLM parser、§5 rag tier |
 | **P4 W11–14** | `multi_step_reasoning`（wage_composition）+ Verifier 加固 + 全 10 类目 + MCP 包装（ADR-0009）+ 前端（ADR-0010） | §5 multi_step、§6、§8 |
 
@@ -1582,7 +1741,7 @@ def run_review(source, options: ReviewOptions = DEFAULT) -> ReviewReport:
 
 ## 附录 A：完整 dataclass 清单（实现时以此为准）
 
-§2（`SourceFormat / DocumentMetadata / IngestResult / Finding / ReviewReport`）+ §3.2.2（`IdentityDetection / *ShapeDetection / FormatDetectionResult`）+ §3.3（`ProcessingPlan / ParseStep / ContentGateResult / QualityAssessment / RoutingDecision`）+ §3.4（`RawParse / TextBlock / Table`）+ §3.5（`NormalizedDoc`）+ §3.6（`LegalNode / Reference / LegalAST`，取代旧 Clause）+ §5.1（`DetectContext`）+ `ReviewOptions`：
+§2（`SourceFormat / DocumentMetadata / IngestResult / Finding / ReviewReport`）+ §3.2.2（`IdentityDetection / *ShapeDetection / FormatDetectionResult`）+ §3.3（`ProcessingPlan / ParseStep / ContentGateResult / QualityAssessment / RoutingDecision`）+ §3.4（`RawParse / TextBlock / Table`）+ §3.5（`NormalizedDoc`）+ §3.6（`LegalNode / Reference / LegalAST`，取代旧 Clause）+ §5.1（`DetectContext / Detector Protocol`）+ §5.3（`DetectorRegistry`）+ §5.4（`RuleAssistedLLMDetector / Facts / RuleVerdict / ProbationFacts / PenaltyFacts / ServicePeriodFacts`）+ `ReviewOptions`：
 
 ```python
 @dataclass
